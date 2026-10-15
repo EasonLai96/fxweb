@@ -43,6 +43,7 @@ export function drawCandles(canvas, all, { theme = "day", digits = 4, lines = []
   const ma10 = sma(all, 10).slice(start), ma30 = sma(all, 30).slice(start);
 
   const vals = candles.flatMap(c => [c.h, c.l]);
+  if (showMA) for (const v of [...ma10, ...ma30]) if (v != null) vals.push(v);
   let min = Math.min(...vals), max = Math.max(...vals);
   const pad = Math.max((max - min) * 0.18, min * 0.0006); min -= pad; max += pad;
   const inRange = lines.filter(l => l.price >= min && l.price <= max);
@@ -90,12 +91,14 @@ export function drawCandles(canvas, all, { theme = "day", digits = 4, lines = []
   });
 
   if (showMA) {
+    ctx.save(); ctx.beginPath(); ctx.rect(left, top, right - left, bottom - top); ctx.clip();
     const drawMA = (arr, color) => {
       ctx.strokeStyle = color; ctx.lineWidth = 1.4; ctx.beginPath(); let on = false;
       arr.forEach((v, i) => { if (v == null) return; const x = xAt(i), y = yOf(v); on ? ctx.lineTo(x, y) : ctx.moveTo(x, y); on = true; });
       ctx.stroke();
     };
     drawMA(ma10, MA10); drawMA(ma30, MA30);
+    ctx.restore();
   }
 
   for (const l of inRange) {
