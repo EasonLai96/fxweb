@@ -1,13 +1,13 @@
-import { initExtras } from "./extras.mjs?v=20261016a";
-import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261016a";
-import * as E from "./engine.mjs?v=20261016a";
-import { createMarket, PAIR_NAMES, NEWS_SETTLE } from "./market.mjs?v=20261016a";
-import * as Store from "./store.mjs?v=20261016a";
-import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261016a";
-import * as Cloud from "./cloud.mjs?v=20261016a";
-import { createRemoteMarket } from "./remote.mjs?v=20261016a";
-import { createAchievementBook } from "./achievements.mjs?v=20261016a";
-import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261016a";
+import { initExtras } from "./extras.mjs?v=20261016b";
+import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261016b";
+import * as E from "./engine.mjs?v=20261016b";
+import { createMarket, PAIR_NAMES, NEWS_SETTLE } from "./market.mjs?v=20261016b";
+import * as Store from "./store.mjs?v=20261016b";
+import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261016b";
+import * as Cloud from "./cloud.mjs?v=20261016b";
+import { createRemoteMarket } from "./remote.mjs?v=20261016b";
+import { createAchievementBook } from "./achievements.mjs?v=20261016b";
+import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261016b";
 
 const THEME_KEY = "fxweb.theme";
 // 兩種模式：
@@ -498,7 +498,8 @@ function checkRisk(prices) {
     if (!(price > 0)) continue;
     const lp = E.lossPct(pos, price);
     if (lp < 0.5) warned.delete(pos.id);
-    else if (lp >= E.WARN_LOSS && !warned.has(pos.id) && !risk && !busy) {
+    // 不檢查 busy：登入模式的 applyServer 是在 poll() 的 busy 期間呼叫的。按鈕送出時 serverCall 自己會擋重複請求。
+    else if (lp >= E.WARN_LOSS && !warned.has(pos.id) && !risk) {
       warned.add(pos.id);
       if (mode === "battle") battleAuto = false;
       openRisk(pos.id, true);
@@ -520,10 +521,12 @@ function openRisk(id, auto) {
     ? `#${pos.id} ${pos.pair} ${pos.side > 0 ? "做多" : "做空"} 已虧掉保證金的 ${(lp * 100).toFixed(1)}%，到 80% 會被強制平倉。你可以補保證金、借款補倉，或暫不處理。${mode === "server" ? "（登入帳戶的行情不會因此暫停）" : "（行情已暫停，處理完才會繼續）"}`
     : "追加保證金可以把強平價推遠。補保證金會佔用可用餘額；借款補倉會向周轉小金庫借錢，整筆加進這筆倉位。";
   $("riskDetail").innerHTML = `浮動盈虧 <b class="${signCls(pnl)}">${signedMoney(pnl)}</b>・保證金 <b>${money(pos.margin)}</b>・目前強平價 <b>${E.liquidationPrice(pos).toFixed(digits(pos.pair))}</b>`;
-  const suggested = Math.max(1, Math.ceil(-pnl / 0.55 - pos.margin));
-  $("riskAmount").value = pnl < 0 ? suggested : Math.max(1, Math.round(pos.margin / 2));
+  // 建議補到虧損只佔保證金 55%；已經低於 55%（手動補倉時常見）就建議補保證金的一半。
+  const toTarget = Math.ceil(-pnl / 0.55 - pos.margin);
+  $("riskAmount").value = toTarget >= 1 ? toTarget : Math.max(1, Math.round(pos.margin / 2));
   $("riskIgnoreBtn").textContent = auto ? "暫不處理" : "取消";
   $("riskModal").classList.remove("hidden");
+  if (mode === "battle") renderBattleBar();
   updateRiskPreview();
   setTimeout(() => $("riskAmount").focus(), 30);
 }
@@ -551,6 +554,7 @@ function updateRiskPreview() {
 function closeRisk() {
   risk = null;
   const m = $("riskModal"); if (m) m.classList.add("hidden");
+  if (mode === "battle" && market) renderBattleBar();   // 「下一天」在彈窗開著時停用，關閉後要恢復
 }
 
 async function riskAdd(source) {

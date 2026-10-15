@@ -1,4 +1,4 @@
-import { equity } from './engine.mjs?v=20261016a';
+import { equity } from './engine.mjs?v=20261016b';
 
 // Standalone renderer: it never fetches data, synthesizes history, or encodes a QR code.
 // context.equityPoints must be an array of actual account-equity samples (USD), in time order.
@@ -58,8 +58,8 @@ export async function drawShareCard(context, options = {}) {
   text('MINT / FX', 229, 122, 32, ink, 800, 730);
   text('虛構行情 · 槓桿交易練習', 229, 164, 25, muted, 500, 730);
   rounded(72, 243, 270, 55, 27, '#ffffffcb');
-  const server = c.mode === 'server';
-  text(server ? '伺服器練習帳戶' : '訪客本機練習', 99, 281, 24, green, 700, 224);
+  const server = c.mode === 'server', battle = c.mode === 'battle';
+  text(server ? '伺服器練習帳戶' : battle ? '經典戰役回放' : '訪客本機練習', 99, 281, 24, green, 700, 224);
   text(o.includeName && server && c.username ? `帳號：${String(c.username)}` : '帳號名稱不公開', 72, 348, 28, muted, 500, 936);
   text('帳戶總權益  /  USD', 72, 438, 31, muted, 700, 936);
   let total;
@@ -75,7 +75,7 @@ export async function drawShareCard(context, options = {}) {
   text(signed(server ? c.progress?.lifetimeStats?.netRealizedPnl : undefined), 100, 702, 45, ink, 750, 395);
   text('本回合權益損益', 572, 644, 24, muted, 600, 408);
   text(signed(finite(total) && finite(c.account?.startingCash) ? total - c.account.startingCash : undefined), 572, 702, 45, ink, 750, 408);
-  text(server ? '累積：伺服器追蹤之已平倉淨損益，重置後保留' : '訪客無伺服器累積紀錄', 72, 781, 21, muted, 500, 936);
+  text(server ? '累積：伺服器追蹤之已平倉淨損益，重置後保留' : battle ? '經典戰役獨立帳戶，不計伺服器成績' : '訪客無伺服器累積紀錄', 72, 781, 21, muted, 500, 936);
 
   const stats = server ? c.progress?.stats : null;
   const closes = !server && Array.isArray(c.account?.log) ? c.account.log.filter(x => x?.type === 'close' && finite(x.pnl)) : [];
@@ -98,7 +98,7 @@ export async function drawShareCard(context, options = {}) {
   }
   rounded(72, 1014, 936, 363, 28, '#ffffffef');
   text('淨值樣本曲線', 102, 1074, 32, ink, 750, 840);
-  text(server ? '伺服器每 10 根 K 線記錄一次 · 非歷史市場報價' : '訪客本機淨值樣本 · 非歷史市場報價', 102, 1109, 21, muted, 500, 840);
+  text(server ? '伺服器每 10 根 K 線記錄一次 · 非歷史市場報價' : battle ? '每個交易日一點 · 歐洲央行歷史參考匯率回放' : '訪客本機淨值樣本 · 非歷史市場報價', 102, 1109, 21, muted, 500, 840);
   const history = Array.isArray(c.equityPoints) ? c.equityPoints : server && Array.isArray(c.account?.eq) ? c.account.eq : null;
   // Require at least two real finite samples. Never append present-day equity to fabricate a curve.
   if (!history || history.length < 2 || history.some(v => !finite(v))) {

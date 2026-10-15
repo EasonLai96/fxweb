@@ -1,11 +1,11 @@
-import { feeFor, LEVERAGES } from './engine.mjs?v=20261016a';
-import { getAvatar, saveAvatar, removeAvatar, avatarImage, DEFAULT_AVATAR_URL } from './avatar.mjs?v=20261016a';
+import { feeFor, LEVERAGES } from './engine.mjs?v=20261016b';
+import { getAvatar, saveAvatar, removeAvatar, avatarImage, DEFAULT_AVATAR_URL } from './avatar.mjs?v=20261016b';
 
 function defaultAvatarImg() {
   const img = document.createElement('img'); img.alt = '預設分享頭像'; img.src = DEFAULT_AVATAR_URL; return img;
 }
-import { drawShareCard } from './share-card.mjs?v=20261016a';
-import makeQR from './qr-code.mjs?v=20261016a';
+import { drawShareCard } from './share-card.mjs?v=20261016b';
+import makeQR from './qr-code.mjs?v=20261016b';
 
 const qr = makeQR(0, 'M');
 qr.addData('https://easonlai96.github.io/fxweb/');
@@ -121,7 +121,7 @@ export function initExtras({ getContext, refresh, onToast = () => {} }) {
   }
   function renderStats() {
     const c = context(); body.replaceChildren();
-    body.append(note(c.mode === 'server' ? '伺服器本回合紀錄（重置後重新計算）。未提供的欄位以「—」顯示。' : '訪客本機練習，不計成績；僅依目前保留的交易紀錄統計，並非完整歷史。'));
+    body.append(note(c.mode === 'server' ? '伺服器本回合紀錄（重置後重新計算）。未提供的欄位以「—」顯示。' : c.mode === 'battle' ? '經典戰役獨立帳戶的紀錄，不計成績；僅依目前保留的交易紀錄統計。' : '訪客本機練習，不計成績；僅依目前保留的交易紀錄統計，並非完整歷史。'));
     const grid = el('dl', 'fx-extra-stats');
     for (const [label, value] of statRows(c)) { const item = el('div'); item.append(el('dt', '', label), el('dd', '', value)); grid.append(item); }
     body.append(grid, note('淨已實現損益扣除已平倉交易對應的開倉費，不包含持倉浮動損益；費用欄包含本回合所有開倉費（含未平倉），不再重複扣除。勝率以扣除對應開倉費後的獲利平倉筆數／全部平倉數計，無平倉時不計勝率。缺少開倉費資料的平倉不計勝負，但仍列入平倉總數。'));
