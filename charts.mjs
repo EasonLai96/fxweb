@@ -169,5 +169,17 @@ export function drawEquity(canvas, points, startValue, { up, down, muted, text }
   const lx = xOf(points.length - 1), ly = yOf(last);
   ctx.fillStyle = color; ctx.beginPath(); ctx.arc(lx, ly, 3.5, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = text; ctx.font = "bold 11px 'DM Mono', monospace";
-  ctx.fillText(Math.round(last).toLocaleString("en-US"), lx + 8, ly + 4);
+  ctx.fillText(shortNum(last), lx + 8, ly + 4);
+}
+
+// 圖上標籤只有 ~50px 寬：超過 6 位數就用 萬 / 億 / 兆 / 京 簡寫。
+function shortNum(v) {
+  const a = Math.abs(v), s = v < 0 ? "-" : "";
+  if (!Number.isFinite(a)) return "∞";
+  if (a >= 1e20) return s + a.toExponential(1).replace("e+", "e");
+  for (const [n, u] of [[1e16, "京"], [1e12, "兆"], [1e8, "億"], [1e6, "萬"]]) if (a >= n) {
+    const q = a / (u === "萬" ? 1e4 : n);
+    return s + (q >= 100 ? Math.round(q).toLocaleString("en-US") : q.toFixed(1)) + u;
+  }
+  return s + Math.round(a).toLocaleString("en-US");
 }

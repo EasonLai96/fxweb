@@ -1,12 +1,18 @@
-import { equity } from './engine.mjs';
+import { equity } from './engine.mjs?v=20261016a';
 
 // Standalone renderer: it never fetches data, synthesizes history, or encodes a QR code.
 // context.equityPoints must be an array of actual account-equity samples (USD), in time order.
 // For server callers, the raw game.account.eq is also accepted when supplied as account.eq.
 const SITE = 'https://easonlai96.github.io/fxweb/';
 const finite = n => typeof n === 'number' && Number.isFinite(n);
-const fmt = n => finite(n) ? `${n < 0 ? '-' : ''}$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
-const signed = n => finite(n) ? `${n >= 0 ? '+' : '-'}$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—';
+// ≥ 1 億改用億 / 兆 / 京簡寫，天文數字也不會超出卡片。
+const absAmt = a => {
+  if (a >= 1e20) return a.toExponential(2).replace('e+', 'e');
+  for (const [n, u] of [[1e16, '京'], [1e12, '兆'], [1e8, '億']]) if (a >= n) return `${(a / n).toLocaleString('en-US', { maximumFractionDigits: 2 })} ${u}`;
+  return a.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
+const fmt = n => finite(n) ? `${n < 0 ? '-' : ''}$${absAmt(Math.abs(n))}` : '—';
+const signed = n => finite(n) ? `${n >= 0 ? '+' : '-'}$${absAmt(Math.abs(n))}` : '—';
 const count = n => Number.isSafeInteger(n) && n >= 0 ? n.toLocaleString('en-US') : '—';
 const FONT = '"Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif';
 
@@ -81,7 +87,7 @@ export async function drawShareCard(context, options = {}) {
   }
   const rate = Number.isSafeInteger(closed) && closed > 0 && Number.isSafeInteger(wins) && !(stats?.missingEntryFeeCloses > 0)
     ? `${(wins / closed * 100).toFixed(1)}%` : '—';
-  const unlocked = server && Array.isArray(c.progress?.achievements) ? c.progress.achievements.filter(a => a?.unlockedAt != null).length : undefined;
+  const unlocked = c.book && typeof c.book.count === 'function' ? c.book.count() : server && Array.isArray(c.progress?.achievements) ? c.progress.achievements.filter(a => a?.unlockedAt != null).length : undefined;
   rounded(72, 817, 936, 171, 28, '#ffffffef');
   const columns = [['近期勝率 · 本回合', rate], ['已解鎖成就', count(unlocked)], ['本回合平倉筆數', count(closed)]];
   for (let i = 0; i < 3; i++) {

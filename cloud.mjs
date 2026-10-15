@@ -1,5 +1,5 @@
 // 帳號與伺服器端遊戲 API。token 存在 localStorage，以 Authorization: Bearer 傳給後端。
-import { API_BASE } from "./config.mjs";
+import { API_BASE } from "./config.mjs?v=20261016a";
 
 const AUTH_KEY = "fxweb.auth.v1";
 export const enabled = () => !!API_BASE;
@@ -65,4 +65,6 @@ export const game = {
   reset: since => api("POST", "/api/game/reset", { since, requestId: crypto.randomUUID() }),
   borrow: (amount, since) => api("POST", "/api/game/borrow", { amount, since, requestId: crypto.randomUUID() }),
   repay: (amount, since) => api("POST", "/api/game/repay", { amount, since, requestId: crypto.randomUUID() }),
+  margin: (id, amount, source, since) => api("POST", "/api/game/margin", { id, amount, source, since, requestId: crypto.randomUUID() }),
+  refuseHelp: (id, since) => api("POST", "/api/game/refuse-help", { id, since, requestId: crypto.randomUUID() }),
 };

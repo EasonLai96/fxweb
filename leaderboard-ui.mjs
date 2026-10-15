@@ -12,7 +12,7 @@ const btn=(text,fn,cls='')=>{const n=el('button',`fx-leader-button ${cls}`,text)
 const finite=n=>typeof n==='number'&&Number.isFinite(n);
 const date=x=>{const n=x?new Date(x).getTime():NaN;return Number.isFinite(n)?new Date(n).toLocaleString('zh-TW',{hour12:false}):'未提供'};
 const pct=x=>finite(x)?`${x>=0?'+':''}${(x*100).toFixed(2)}%`:'—';
-const money=x=>finite(x)?new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(x):'—';
+const money=x=>{if(!finite(x))return'—';const a=Math.abs(x),s=x<0?'-':'';if(a>=1e20)return`${s}$${a.toExponential(2).replace('e+','e')}`;for(const[n,u]of[[1e16,'京'],[1e12,'兆'],[1e8,'億']])if(a>=n)return`${s}$${(a/n).toLocaleString('en-US',{maximumFractionDigits:2})} ${u}`;return new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(x)};
 const count=x=>Number.isInteger(x)&&x>=0?x.toLocaleString('zh-TW'):'—';
 export function initLeaderboard({request,onToast=()=>{},getContext}={}){
   if(typeof request!=='function'||typeof getContext!=='function')throw new TypeError('排行榜需要 request 與 getContext');

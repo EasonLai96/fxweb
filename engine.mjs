@@ -80,6 +80,33 @@ export function repay(state, amount, time) {
   return { ok: true, amount, cleared, owed: loanOwed(state) };
 }
 
+// ===== 補倉 =====
+// 追加保證金：從可用保證金撥入指定持倉，降低虧損佔保證金的比例、把強平價推遠。
+// 本遊戲的保證金不從現金扣出（權益 = 現金 + 浮動盈虧），所以追加只會減少可用保證金。
+export function addMargin(state, prices, id, amount, time) {
+  const pos = state.positions.find(p => p.id === id);
+  if (!pos) return { ok: false, error: "找不到持倉（可能已被強制平倉）" };
+  if (typeof amount !== "number" || !Number.isFinite(amount)) return { ok: false, error: "補倉金額無效" };
+  amount = Math.floor(amount * 100) / 100;
+  if (amount < 1) return { ok: false, error: "補倉金額至少 $1" };
+  if (amount > freeMargin(state, prices) + EPS) return { ok: false, error: "可用保證金不足，可改用借款補倉" };
+  pos.margin += amount;
+  state.log.push({ t: time, type: "margin", id, amount });
+  return { ok: true, amount, margin: pos.margin };
+}
+
+// 借款補倉：向周轉小金庫借款，整筆直接加進該持倉的保證金，並標記這筆倉位「借錢救過」。
+export function borrowToMargin(state, prices, id, amount, time) {
+  const pos = state.positions.find(p => p.id === id);
+  if (!pos) return { ok: false, error: "找不到持倉（可能已被強制平倉）" };
+  const b = borrow(state, amount, time);
+  if (!b.ok) return b;
+  pos.margin += b.amount;
+  pos.borrowed = true;
+  state.log.push({ t: time, type: "margin", id, amount: b.amount, borrowed: true });
+  return { ok: true, amount: b.amount, margin: pos.margin, rateDaily: b.rateDaily };
+}
+
 export function createAccount(startingCash = 10000) {
   return { cash: startingCash, positions: [], log: [], nextId: 1, startingCash };
 }
@@ -163,7 +190,10 @@ export function closePosition(state, id, price, time, reason = "manual") {
   const pnl = unrealizedPnl(pos, price);
   state.cash += pnl;
   state.positions.splice(idx, 1);
-  state.log.push({ t: time, type: "close", id, pair: pos.pair, price, pnl, reason });
+  const entry = { t: time, type: "close", id, pair: pos.pair, price, pnl, reason };
+  if (pos.borrowed) entry.borrowed = true;       // 這筆倉位曾借款補倉（成就判定用）
+  if (pos.refusedHelp) entry.refused = true;     // 風險提醒時選了「暫不處理」
+  state.log.push(entry);
   return { ok: true, pnl };
 }
 
@@ -180,8 +210,9 @@ export function settleTick(state, prices, time) {
   }
   for (const id of toLiquidate) {
     const pos = state.positions.find(p => p.id === id);
+    const borrowed = !!pos.borrowed, refused = !!pos.refusedHelp;
     closePosition(state, id, prices[pos.pair], time, "liquidated");
-    events.push({ type: "liquidated", id, pair: pos.pair });
+    events.push({ type: "liquidated", id, pair: pos.pair, borrowed, refused });
   }
   return events;
 }
@@ -195,10 +226,10 @@ export function resetAccount(state) {
   delete state.loan;   // 重置回到乾淨的 $10,000，清除所有未償還借款
 }
 
-// 強平價：虧損達保證金 80% 時的價格，k = LIQ_LOSS / leverage。
+// 強平價：虧損達保證金 80% 時的價格，k = LIQ_LOSS × 保證金 / 名目（未補倉時等於 LIQ_LOSS / leverage）。
 // XXX/USD：side*(P-entry)*(N/entry) = -k*N  => P = entry*(1 - side*k)
 // USD/XXX：side*(P-entry)*N/P      = -k*N  => P = entry/(1 + side*k)
 export function liquidationPrice(pos) {
-  const k = LIQ_LOSS / pos.leverage;
+  const k = LIQ_LOSS * (pos.margin > 0 && pos.notional > 0 ? pos.margin / pos.notional : 1 / pos.leverage);
   return isUsdBase(pos.pair) ? pos.entry / (1 + pos.side * k) : pos.entry * (1 - pos.side * k);
 }

@@ -1,11 +1,13 @@
-import { initExtras } from "./extras.mjs";
-import { initLeaderboard } from "./leaderboard-ui.mjs";
-import * as E from "./engine.mjs";
-import { createMarket, PAIR_NAMES, NEWS_SETTLE } from "./market.mjs";
-import * as Store from "./store.mjs";
-import { drawCandles, drawSpark, drawEquity } from "./charts.mjs";
-import * as Cloud from "./cloud.mjs";
-import { createRemoteMarket } from "./remote.mjs";
+import { initExtras } from "./extras.mjs?v=20261016a";
+import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261016a";
+import * as E from "./engine.mjs?v=20261016a";
+import { createMarket, PAIR_NAMES, NEWS_SETTLE } from "./market.mjs?v=20261016a";
+import * as Store from "./store.mjs?v=20261016a";
+import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261016a";
+import * as Cloud from "./cloud.mjs?v=20261016a";
+import { createRemoteMarket } from "./remote.mjs?v=20261016a";
+import { createAchievementBook } from "./achievements.mjs?v=20261016a";
+import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261016a";
 
 const THEME_KEY = "fxweb.theme";
 // 兩種模式：
@@ -22,23 +24,61 @@ let serverMarketMode = "shared", switchStatus = "ready", settledPrices = null, a
 // 切換帳戶/登出後，舊請求不可覆蓋新畫面。
 const currentRequest = epoch => epoch === modeEpoch && mode === "server";
 
-function enterGuest() {
+// 三種模式：guest / server / battle（經典戰役：真實歷史日收盤回放，本機獨立帳戶）
+let battleAuto = false;     // 戰役自動播放
+let risk = null;            // 目前開著的風險提醒 { id, pair, auto }
+const warned = new Set();   // 已提醒過的持倉（虧損回到 50% 以下才會再提醒）
+let lastLossTrack = 0;
+const achOwner = () => (Cloud.user() ? "user:" + Cloud.user() : "guest");
+const book = createAchievementBook({ onUnlock: def => showAchievement(def) });
+
+function resetModeFlags() {
   modeEpoch++; busy = false; catchingUp = false; lastOk = 0;
   progress = null; resets = 0; settledPrices = null; accountSettledAt = null; remainingTicks = 0; serverMarketMode = "shared"; switchStatus = "ready"; lastMarketMode = null;
+  battleAuto = false; lastLossTrack = 0; warned.clear(); closeRisk();
+}
+
+function enterGuest() {
+  resetModeFlags();
   mode = "guest";
+  book.setOwner(achOwner());
   market = createMarket(Date.now() & 0x7fffffff);
   state = Store.load() || E.createAccount(10000);
   state.positions = state.positions.filter(p => market.get(p.pair) != null);
   equityPts.length = 0; equityPts.push(E.equity(state, market.prices()));
+  scanLog(state.log);
 }
 
 function enterServer() {
-  modeEpoch++; busy = false; catchingUp = false; lastOk = 0;
-  progress = null; resets = 0; settledPrices = null; accountSettledAt = null; remainingTicks = 0; serverMarketMode = "shared"; switchStatus = "ready"; lastMarketMode = null;
+  resetModeFlags();
   mode = "server";
+  book.setOwner(achOwner());
   market = createRemoteMarket();
   state = E.createAccount(10000);
   equityPts.length = 0;
+}
+
+// 經典戰役：獨立的 $10,000 帳戶，不影響訪客存檔或伺服器帳戶。resume=true 時接續本機存檔。
+function enterBattle(id, resume) {
+  const saved = loadBattleSave();
+  resetModeFlags();
+  mode = "battle";
+  book.setOwner(achOwner());
+  const cont = resume && saved && saved.id === id;
+  market = createBattleMarket(id, cont ? saved.cursor : undefined);
+  state = cont ? Store.normalize(saved.account) || E.createAccount(10000) : E.createAccount(10000);
+  ui.pair = market.info.pair;
+  equityPts.length = 0; equityPts.push(E.equity(state, market.prices()));
+  saveBattle(id, market.cursor(), state);
+  lastNewsStep = market.step();
+  showBattleNews(market.news().at(-1));
+  checkBattleDate();
+}
+
+function leaveBattle() {
+  battleAuto = false;
+  if (Cloud.enabled() && Cloud.user()) switchToServer(); else { enterGuest(); renderAll(); }
+  toast("已回到即時行情，戰役進度保存在這台裝置");
 }
 
 const ui = { pair: "EUR/USD", margin: 500, leverage: 5, paused: false, showMA: true, showNews: true, showPos: true, historyOpen: false };
@@ -47,9 +87,18 @@ let newsTimer = 0, toastTimer = 0, lastNewsStep = -1;
 
 const $ = id => document.getElementById(id);
 const digits = p => (p.includes("JPY") ? 3 : 4);
-const money = v => (v < 0 ? "-$" : "$") + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const signedMoney = v => (v >= 0 ? "+" : "-") + "$" + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const pct = v => `${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`;
+// 金額 ≥ 1 億改用中文大數單位簡寫，避免天文數字撐爆版面。
+const BIG_UNITS = [[1e16, "京"], [1e12, "兆"], [1e8, "億"]];
+function absMoney(v) {
+  const a = Math.abs(v);
+  if (!Number.isFinite(a)) return "∞";
+  if (a >= 1e20) return a.toExponential(2).replace("e+", "e");
+  for (const [n, u] of BIG_UNITS) if (a >= n) return (a / n).toLocaleString("en-US", { maximumFractionDigits: 2 }) + " " + u;
+  return a.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+const money = v => (v < 0 ? "-$" : "$") + absMoney(v);
+const signedMoney = v => (v >= 0 ? "+" : "-") + "$" + absMoney(v);
+const pct = v => Math.abs(v) >= 1e4 ? `${v >= 0 ? "+" : "-"}${absMoney(Math.abs(v * 100)).replace(/\.00$/, "")}%` : `${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`;
 const signCls = v => (v > 0 ? "positive" : v < 0 ? "negative" : "");
 const spaced = p => p.replace("/", " / ");
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -212,26 +261,38 @@ async function order(side) {
   const margin = Number($("marginInput").value);
   if (!(margin >= 10)) { toast("保證金至少 $10", true); return; }
   ui.margin = margin;
+  const pair = ui.pair, candles = market.candles(pair).slice();
   if (mode === "server") {
-    const r = await serverCall(() => Cloud.game.open({ pair: ui.pair, side, leverage: ui.leverage, margin }, market.step()));
+    const r = await serverCall(() => Cloud.game.open({ pair, side, leverage: ui.leverage, margin }, market.step()));
     const pos = r && r.result && r.result.opened;
-    if (pos) toast(`已${side > 0 ? "做多" : "做空"} ${ui.pair}・進場 ${pos.entry.toFixed(digits(ui.pair))}・手續費 ${money(pos.feePaid)}`);
+    if (pos) {
+      toast(`已${side > 0 ? "做多" : "做空"} ${pair}・進場 ${pos.entry.toFixed(digits(pair))}・手續費 ${money(pos.feePaid)}`);
+      book.checkOpen({ side, entry: pos.entry, candles });
+    }
     return;
   }
-  const r = E.openPosition(state, market.prices(), { pair: ui.pair, side, leverage: ui.leverage, notional: margin * ui.leverage, time: Date.now() });
+  const r = E.openPosition(state, market.prices(), { pair, side, leverage: ui.leverage, notional: margin * ui.leverage, time: Date.now() });
   if (!r.ok) { toast(r.error, true); return; }
-  toast(`已${side > 0 ? "做多" : "做空"} ${ui.pair}・名目 ${money(r.position.notional)}・手續費 ${money(r.position.feePaid)}`);
+  toast(`已${side > 0 ? "做多" : "做空"} ${pair}・名目 ${money(r.position.notional)}・手續費 ${money(r.position.feePaid)}`);
+  book.checkOpen({ side, entry: r.position.entry, candles });
   afterChange();
 }
 
 async function closePos(id, pair) {
   if (mode === "server") {
     const r = await serverCall(() => Cloud.game.close(id, market.step()));
-    if (r && r.result) toast(`已平倉・${r.result.pnl >= 0 ? "獲利" : "虧損"} ${signedMoney(r.result.pnl)}`, r.result.pnl < 0);
+    if (r && r.result) {
+      toast(`已平倉・${r.result.pnl >= 0 ? "獲利" : "虧損"} ${signedMoney(r.result.pnl)}`, r.result.pnl < 0);
+      book.checkClose({ pnl: r.result.pnl });
+    }
     return;
   }
   const r = E.closePosition(state, id, market.get(pair), Date.now());
-  if (r.ok) toast(`已平倉・${r.pnl >= 0 ? "獲利" : "虧損"} ${signedMoney(r.pnl)}`, r.pnl < 0);
+  if (r.ok) {
+    toast(`已平倉・${r.pnl >= 0 ? "獲利" : "虧損"} ${signedMoney(r.pnl)}`, r.pnl < 0);
+    book.checkClose({ pnl: r.pnl });
+  }
+  if (risk && risk.id === id) closeRisk();
   afterChange();
 }
 
@@ -242,7 +303,11 @@ async function resetAll() {
     if (r) { equityPts.length = 0; toast("帳戶已重置為 $10,000（行情不會重新開始）"); }
     return;
   }
-  E.resetAccount(state); Store.clear(); equityPts.length = 0;
+  if (mode === "battle") {
+    // 戰役的「重新開始」= 從戰役第一天重新打
+    enterBattle(market.id, false); toast(`「${market.info.title}」從頭開始`); renderAll(); return;
+  }
+  E.resetAccount(state); Store.clear(); equityPts.length = 0; warned.clear(); book.resetTimers();
   toast("帳戶已重置為 $10,000"); afterChange();
 }
 
@@ -254,11 +319,12 @@ async function doBorrow() {
   if (mode === "server") {
     const r = await serverCall(() => Cloud.game.borrow(amount, market.step()));
     const b = r && r.result && r.result.borrowed;
-    if (b) { clearLoanInput(); toast(`已借入 ${money(b.amount)}・日息 ${(b.rateDaily * 100).toFixed(2)}%`); }
+    if (b) { clearLoanInput(); toast(`已借入 ${money(b.amount)}・日息 ${(b.rateDaily * 100).toFixed(2)}%`); book.checkAccount({ loanPrincipal: b.amount }); }
     return;
   }
   const r = E.borrow(state, amount, Date.now());
   if (!r.ok) { toast(r.error, true); return; }
+  book.checkAccount({ loanPrincipal: r.amount });
   clearLoanInput();
   toast(`已借入 ${money(r.amount)}・日息 ${(r.rateDaily * 100).toFixed(2)}%`);
   afterChange();
@@ -304,14 +370,14 @@ function renderPositions(prices) {
     const risk = E.lossPct(pos, price), riskW = Math.min(100, risk / E.LIQ_LOSS * 100);
     const riskColor = risk >= E.WARN_LOSS ? cssVar("--down") : risk >= 0.3 ? "#e9a35a" : cssVar("--accent");
     return `<div class="position-row${risk >= E.WARN_LOSS ? " risky" : ""}">
-      <div class="pos-name"><strong>${pos.pair}<span class="direction ${pos.side > 0 ? "long" : "short"}">${pos.side > 0 ? "做多" : "做空"}</span>${risk >= E.WARN_LOSS ? '<span class="risk-tag">風險偏高</span>' : ""}</strong>
+      <div class="pos-name"><strong>${pos.pair}<span class="direction ${pos.side > 0 ? "long" : "short"}">${pos.side > 0 ? "做多" : "做空"}</span>${risk >= E.WARN_LOSS ? '<span class="risk-tag">風險偏高</span>' : ""}${pos.borrowed ? '<span class="risk-tag loan-tag">借款補倉</span>' : ""}</strong>
         <small>${money(pos.margin)} 保證金・${pos.leverage}×・${money(pos.notional)} 倉位</small></div>
       <div class="pos-cell pos-entry"><small>進場價</small><strong>${pos.entry.toFixed(d)}</strong></div>
       <div class="pos-cell"><small>現價</small><strong>${price.toFixed(d)}</strong></div>
       <div class="pos-cell pos-liq"><small>強平價</small><strong>${E.liquidationPrice(pos).toFixed(d)}</strong></div>
       <div class="pos-cell"><small>浮動盈虧</small><strong class="${signCls(pnl)}">${signedMoney(pnl)}</strong>
         <div class="risk-bar" title="距離強平"><i style="width:${riskW}%;background:${riskColor}"></i></div></div>
-      <button class="close-btn" type="button" data-close="${pos.id}" data-pair="${pos.pair}">平倉</button>
+      <div class="pos-actions"><button class="close-btn help-btn" type="button" data-help="${pos.id}" title="追加保證金或借款補倉">補倉</button><button class="close-btn" type="button" data-close="${pos.id}" data-pair="${pos.pair}">平倉</button></div>
     </div>`;
   }).join("");
 }
@@ -350,6 +416,12 @@ function showNews(n) {
 function renderNewsCenter() {
   const step = market.step();
   const list = market.news().slice().reverse();
+  if (mode === "battle") {
+    $("newsCenterList").innerHTML = list.length ? list.map(n => `<div class="news-item"><span class="nf-tag battle">${esc(n.date)}・${esc(n.tag)}</span>
+      <h4>${esc(n.title)}</h4><small>${esc(n.body)}</small></div>`).join("")
+      : '<div class="empty-state"><div class="empty-icon">✦</div>戰役新聞會在對應日期出現</div>';
+    return;
+  }
   $("newsCenterList").innerHTML = list.length ? list.map(n => {
     const bull = n.claimed > 0, settled = n.settled != null ? n.settled : step - n.step >= NEWS_SETTLE;
     return `<div class="news-item"><span class="nf-tag${bull ? "" : " bear"}">${n.pair}・${bull ? "利多" : "利空"}</span>${settled && n.reversed ? '<span class="rev-tag">市場反向</span>' : ""}
@@ -373,18 +445,253 @@ function renderAll() {
   renderBank();
 }
 
-function afterChange() { Store.save(state); equityPts.push(E.equity(state, market.prices())); renderAll(); }
+function afterChange() { saveCurrent(); checkAccountAch(mode === "server" && settledPrices ? settledPrices : market.prices()); equityPts.push(E.equity(state, market.prices())); renderAll(); }
 
 function showEvents(events) {
   for (const ev of events) {
-    if (ev.type === "liquidated") toast(`#${ev.id} ${ev.pair} 虧損達保證金 80%，已強制平倉`, true);
+    if (ev.type === "liquidated") {
+      toast(`#${ev.id} ${ev.pair} 虧損達保證金 80%，已強制平倉`, true);
+      book.checkLiquidation(ev);
+      warned.delete(ev.id);
+      if (risk && risk.id === ev.id) closeRisk();
+    }
     if (ev.type === "expired") toast(`#${ev.id} ${ev.pair} 持倉滿 7 天，到期已自動平倉`);
   }
 }
 
+/* ---------- 成就判定 ---------- */
+function showAchievement(def) {
+  toast(`🏆 達成成就「${def.name}」`);
+  $("nfTag").textContent = "🏆 成就"; $("nfTag").className = "nf-tag ach";
+  $("nfTitle").textContent = `達成「${def.name}」`;
+  $("nfBody").textContent = def.desc;
+  $("newsFloat").classList.add("show");
+  clearTimeout(newsTimer); newsTimer = setTimeout(() => $("newsFloat").classList.remove("show"), 5200);
+  extras?.update();
+}
+
+// 從平倉紀錄補判定（伺服器帳戶在別台裝置被強平、或改版前的紀錄都會被算到）。
+function scanLog(log) {
+  for (const l of log || []) {
+    if (l.type !== "close") continue;
+    if (l.reason === "liquidated") book.checkLiquidation(l);
+    else if (l.reason !== "expired" && l.pnl > 0) book.checkClose(l);
+  }
+}
+
+function checkAccountAch(prices) {
+  if (!prices || state.positions.some(p => !(prices[p.pair] > 0))) return;
+  book.checkAccount({ netWorth: E.netWorth(state, prices), startingCash: state.startingCash, loanPrincipal: state.loan ? state.loan.principal : 0 });
+}
+
+function trackLossTime(prices, opts) {
+  if (!prices) return;
+  book.trackLosses(mode === "battle" ? "battle:" + market.id : mode, state.positions,
+    pos => prices[pos.pair] > 0 ? E.unrealizedPnl(pos, prices[pos.pair]) : 0, opts);
+}
+
+/* ---------- 風險提醒（虧損達保證金 60%） ---------- */
+function checkRisk(prices) {
+  if (!prices) return;
+  for (const pos of state.positions) {
+    const price = prices[pos.pair];
+    if (!(price > 0)) continue;
+    const lp = E.lossPct(pos, price);
+    if (lp < 0.5) warned.delete(pos.id);
+    else if (lp >= E.WARN_LOSS && !warned.has(pos.id) && !risk && !busy) {
+      warned.add(pos.id);
+      if (mode === "battle") battleAuto = false;
+      openRisk(pos.id, true);
+      return;
+    }
+  }
+}
+
+function riskPrices() { return mode === "server" && settledPrices ? settledPrices : market.prices(); }
+
+function openRisk(id, auto) {
+  const pos = state.positions.find(p => p.id === id);
+  if (!pos) return;
+  if (!$("authModal").classList.contains("hidden") || !$("rcModal").classList.contains("hidden")) return;
+  risk = { id, pair: pos.pair, auto };
+  const price = riskPrices()[pos.pair], pnl = E.unrealizedPnl(pos, price), lp = E.lossPct(pos, price);
+  $("riskTitle").textContent = auto ? (lp >= E.LIQ_LOSS ? "倉位已觸及強平線" : "倉位接近強平線") : `補倉：#${pos.id} ${pos.pair}`;
+  $("riskMsg").textContent = auto
+    ? `#${pos.id} ${pos.pair} ${pos.side > 0 ? "做多" : "做空"} 已虧掉保證金的 ${(lp * 100).toFixed(1)}%，到 80% 會被強制平倉。你可以補保證金、借款補倉，或暫不處理。${mode === "server" ? "（登入帳戶的行情不會因此暫停）" : "（行情已暫停，處理完才會繼續）"}`
+    : "追加保證金可以把強平價推遠。補保證金會佔用可用餘額；借款補倉會向周轉小金庫借錢，整筆加進這筆倉位。";
+  $("riskDetail").innerHTML = `浮動盈虧 <b class="${signCls(pnl)}">${signedMoney(pnl)}</b>・保證金 <b>${money(pos.margin)}</b>・目前強平價 <b>${E.liquidationPrice(pos).toFixed(digits(pos.pair))}</b>`;
+  const suggested = Math.max(1, Math.ceil(-pnl / 0.55 - pos.margin));
+  $("riskAmount").value = pnl < 0 ? suggested : Math.max(1, Math.round(pos.margin / 2));
+  $("riskIgnoreBtn").textContent = auto ? "暫不處理" : "取消";
+  $("riskModal").classList.remove("hidden");
+  updateRiskPreview();
+  setTimeout(() => $("riskAmount").focus(), 30);
+}
+
+function updateRiskPreview() {
+  if (!risk) return;
+  const pos = state.positions.find(p => p.id === risk.id);
+  if (!pos) { closeRisk(); return; }
+  const amt = Math.floor(Number($("riskAmount").value) * 100) / 100;
+  const free = E.freeMargin(state, riskPrices()), owed = E.loanOwed(state);
+  const p = $("riskPreview");
+  if (!(amt >= 1)) p.textContent = "請輸入至少 $1。";
+  else {
+    const lp = E.liquidationPrice({ ...pos, margin: pos.margin + amt });
+    p.innerHTML = `補 <b>${money(amt)}</b> 後強平價 → <b>${lp.toFixed(digits(pos.pair))}</b>`
+      + (amt <= E.LOAN_MAX ? `・借款日息 ${(E.loanRate(amt) * 100).toFixed(2)}%` : "");
+  }
+  $("riskAddBtn").disabled = !(amt >= 1) || amt > free + 1e-9;
+  $("riskAddBtn").title = amt > free + 1e-9 ? `可用餘額只有 ${money(Math.max(0, free))}` : "";
+  $("riskLoanBtn").disabled = !(amt >= 1) || amt > E.LOAN_MAX || owed > 0;
+  $("riskLoanBtn").title = owed > 0 ? "已有未還借款，請先在周轉小金庫還清" : "";
+  $("riskFree").textContent = `可用餘額 ${money(Math.max(0, free))}${owed > 0 ? `・尚欠 ${money(owed)}（不能再借）` : `・可借上限 ${money(E.LOAN_MAX)}`}`;
+}
+
+function closeRisk() {
+  risk = null;
+  const m = $("riskModal"); if (m) m.classList.add("hidden");
+}
+
+async function riskAdd(source) {
+  if (!risk) return;
+  const id = risk.id, amt = Math.floor(Number($("riskAmount").value) * 100) / 100;
+  if (!(amt >= 1)) { toast("補倉金額至少 $1", true); return; }
+  if (mode === "server") {
+    const r = await serverCall(() => Cloud.game.margin(id, amt, source, market.step()));
+    const m = r && r.result && r.result.margin;
+    if (m) {
+      closeRisk();
+      toast(`${source === "loan" ? "已借款" : "已追加"} ${money(m.amount)} 到 #${id} 保證金`);
+      if (source === "loan") book.checkAccount({ loanPrincipal: m.amount });
+    }
+    return;
+  }
+  const r = source === "loan" ? E.borrowToMargin(state, market.prices(), id, amt, Date.now()) : E.addMargin(state, market.prices(), id, amt, Date.now());
+  if (!r.ok) { toast(r.error, true); return; }
+  closeRisk();
+  toast(`${source === "loan" ? "已借款" : "已追加"} ${money(r.amount)} 到 #${id} 保證金`);
+  if (source === "loan") book.checkAccount({ loanPrincipal: r.amount });
+  saveCurrent(); afterChange();
+}
+
+async function riskIgnore() {
+  if (!risk) return;
+  const { id, auto } = risk;
+  closeRisk();
+  if (!auto) return;
+  if (mode === "server") { await serverCall(() => Cloud.game.refuseHelp(id, market.step())); return; }
+  const pos = state.positions.find(p => p.id === id);
+  if (pos) pos.refusedHelp = true;
+  saveCurrent(); renderAll();
+}
+
+function bindRisk() {
+  $("riskAmount").addEventListener("input", updateRiskPreview);
+  $("riskAddBtn").onclick = () => riskAdd("cash");
+  $("riskLoanBtn").onclick = () => riskAdd("loan");
+  $("riskIgnoreBtn").onclick = riskIgnore;
+  $("riskClose").onclick = riskIgnore;
+}
+
+function saveCurrent() {
+  if (mode === "guest") Store.save(state);
+  else if (mode === "battle") saveBattle(market.id, market.cursor(), state);
+}
+
+/* ---------- 經典戰役 ---------- */
+function showBattleNews(n) {
+  if (!n) return;
+  $("tickerTag").textContent = `${n.date}・${n.tag}`; $("tickerTag").className = "ticker-tag battle";
+  $("tickerTrack").textContent = `${n.title}　——　${n.body}`; $("tickerTrack").className = "ticker-track";
+  $("nfTag").textContent = `${n.date}・${n.tag}`; $("nfTag").className = "nf-tag battle";
+  $("nfTitle").textContent = n.title; $("nfBody").textContent = n.body;
+  $("newsFloat").classList.add("show");
+  clearTimeout(newsTimer); newsTimer = setTimeout(() => $("newsFloat").classList.remove("show"), 6500);
+}
+
+function checkBattleDate() {
+  if (mode === "battle" && market.id === "franc-2015" && market.date() >= "2015-01-15") book.unlock("killed-by-chf");
+}
+
+function nextBattleDay() {
+  if (mode !== "battle" || risk) return;
+  if (market.atEnd()) { battleAuto = false; toast("戰役已到最後一天，可以平倉結算或重新開始"); renderAll(); return; }
+  const { prices, news } = market.next();
+  E.accrueLoan(state, E.LOAN_DAY_TICKS);            // 一個交易日 = 一天利息
+  showEvents(E.settleTick(state, prices, Date.now()));
+  for (const n of news) showBattleNews(n);
+  equityPts.push(E.equity(state, prices));
+  trackLossTime(prices, { days: 1 });
+  checkBattleDate();
+  checkAccountAch(prices);
+  scanLog(state.log.slice(-5));
+  saveBattle(market.id, market.cursor(), state);
+  if (market.atEnd()) {
+    battleAuto = false;
+    const nw = E.netWorth(state, prices) - state.startingCash;
+    toast(`「${market.info.title}」回放結束・淨資產變化 ${signedMoney(nw)}`, nw < 0);
+  }
+  renderAll();
+  checkRisk(prices);
+  if (!$("newsCenter").classList.contains("hidden")) renderNewsCenter();
+}
+
+function renderBattleBar() {
+  const bar = $("battleBar"), on = mode === "battle";
+  bar.classList.toggle("hidden", !on);
+  document.body.classList.toggle("in-battle", on);
+  if (!on) return;
+  const p = market.progress();
+  $("battleTitle").textContent = market.info.title;
+  $("battleDate").textContent = market.date();
+  $("battleDay").textContent = p.day >= 0 ? `第 ${p.day + 1} / ${p.days + 1} 個交易日` : "暖身資料";
+  $("battleEvent").textContent = market.date() >= market.info.event ? `事件日 ${market.info.event} 已過` : `距事件日 ${market.info.event}`;
+  $("battleMeter").style.width = `${Math.max(0, Math.min(100, (p.day + 1) / (p.days + 1) * 100))}%`;
+  $("battleNextBtn").disabled = market.atEnd() || !!risk;
+  $("battleAutoBtn").textContent = battleAuto ? "暫停播放" : "自動播放";
+  $("battleAutoBtn").disabled = market.atEnd();
+}
+
+function renderBattlePicker() {
+  const saved = loadBattleSave();
+  $("battleList").innerHTML = BATTLES.map(b => {
+    const cont = saved && saved.id === b.id;
+    return `<div class="battle-card">
+      <div class="battle-card-head"><strong>${esc(b.title)}</strong><span class="battle-pair">${b.pair}</span></div>
+      <p>${esc(b.description)}</p>
+      <small>事件日 ${b.event}・從 ${b.start} 開始・<a href="${b.source}" target="_blank" rel="noopener">官方資料</a></small>
+      <div class="battle-card-actions">
+        ${cont ? `<button type="button" class="primary-button" data-battle="${b.id}" data-resume="1">繼續（${esc(dateAt(b.id, saved.cursor))}）</button>` : ""}
+        <button type="button" class="${cont ? "outline-button" : "primary-button"}" data-battle="${b.id}">${cont ? "重新開始" : "開始戰役"}</button>
+      </div></div>`;
+  }).join("");
+}
+
+function bindBattle() {
+  const openPicker = () => { renderBattlePicker(); $("battleModal").classList.remove("hidden"); };
+  const closePicker = () => $("battleModal").classList.add("hidden");
+  $("battleBtn").onclick = openPicker;
+  $("battleModalClose").onclick = closePicker;
+  $("battleList").onclick = e => {
+    const b = e.target.closest("[data-battle]"); if (!b) return;
+    const saved = loadBattleSave(), resume = !!b.dataset.resume;
+    if (!resume && saved && saved.id !== b.dataset.battle && saved.account.positions.length
+      && !confirm("另一場戰役還有持倉，開始新戰役會覆蓋那場的進度。確定嗎？")) return;
+    closePicker();
+    enterBattle(b.dataset.battle, resume);
+    renderAccountBtn(); renderAll();
+    toast(`進入經典戰役「${market.info.title}」・按「下一天」推進`);
+  };
+  $("battleNextBtn").onclick = nextBattleDay;
+  $("battleAutoBtn").onclick = () => { battleAuto = !battleAuto; renderBattleBar(); };
+  $("battleExitBtn").onclick = leaveBattle;
+}
+
 function loop() {
   if (mode === "server") { poll(); return; }
-  if (ui.paused) return;
+  if (mode === "battle") { if (battleAuto && !risk) nextBattleDay(); return; }
+  if (ui.paused || (risk && risk.auto)) return;
   const { prices, news } = market.tick();
   E.accrueLoan(state, 1);
   const events = E.settleTick(state, prices, Date.now());
@@ -392,8 +699,11 @@ function loop() {
   if (news && news.step !== lastNewsStep) { lastNewsStep = news.step; showNews(news); }
   equityPts.push(E.equity(state, prices));
   if (equityPts.length > 500) equityPts.shift();
+  trackLossTime(prices, { ms: 1500 });
+  checkAccountAch(prices);
   Store.save(state);
   renderAll();
+  checkRisk(prices);
   if (!$("newsCenter").classList.contains("hidden")) renderNewsCenter();
 }
 
@@ -416,6 +726,14 @@ function applyServer(v) {
   if (a.loan) state.loan = a.loan; else delete state.loan;
   equityPts.length = 0; equityPts.push(...(a.eq || []), E.equity(state, settledPrices || market.prices()));
   showEvents(v.events || []);
+  if (!catchingUp && market.ready()) {
+    const px = settledPrices || market.prices(), now = Date.now();
+    // 浮虧計時用實際經過時間；分頁隱藏或斷線造成的大空檔最多算 5 秒。
+    if (lastLossTrack) trackLossTime(px, { ms: Math.min(5000, Math.max(0, now - lastLossTrack)) });
+    lastLossTrack = now;
+    scanLog(a.log);
+    checkAccountAch(px);
+  }
   const latest = fresh[fresh.length - 1];
   if (latest) showNews(latest);
   lastOk = Date.now();
@@ -423,6 +741,7 @@ function applyServer(v) {
     ? `共同行情正在補算；帳戶僅結算至 ${new Date(accountSettledAt || Date.now()).toLocaleString("zh-TW")}，尚差 ${remainingTicks} 根，不能交易。`
     : serverMarketMode === "legacy" ? "舊持倉仍用原本的個人行情，請結清後切換到全場共用虛構行情。" : "已連線。登入玩家共用同一組虛構行情。");
   renderAll();
+  if (!catchingUp && market.ready()) checkRisk(settledPrices || market.prices());
   if (!$("newsCenter").classList.contains("hidden")) renderNewsCenter();
 }
 
@@ -458,6 +777,14 @@ function setTradeBusy(on) {
 }
 
 function renderModeBadge() {
+  renderBattleBar();
+  if (mode === "battle") {
+    $("modeBadge").textContent = `經典戰役・${market.date()}`; $("modeBadge").className = "mode-badge battle";
+    $("accountModeChip").textContent = "經典戰役・獨立帳戶";
+    $("guestNote").classList.add("hidden"); $("pauseBtn").classList.add("hidden");
+    $("dataStatus").textContent = "真實歷史日收盤・一根 = 一個交易日";
+    return;
+  }
   const server = mode === "server";
   const offline = server && Date.now() - lastOk > 6000;
   $("modeBadge").textContent = server ? (!lastOk ? "連線中…" : catchingUp ? `補算中・差${remainingTicks}根` : offline ? "連線中斷" : serverMarketMode === "legacy" ? "舊帳戶個人行情" : "全場共同行情") : "訪客・本機練習";
@@ -475,9 +802,13 @@ function bind() {
   $("leverageRange").oninput = e => { ui.leverage = E.LEVERAGES[Number(e.target.value)]; renderOrder(market.prices(), E.metrics(state, market.prices())); };
   $("maxBtn").onclick = () => { const v = maxMargin(market.prices()); ui.margin = v; $("marginInput").value = v; renderOrder(market.prices(), E.metrics(state, market.prices())); };
   $("positions").onclick = e => {
+    const h = e.target.closest("[data-help]");
+    if (h) { openRisk(Number(h.dataset.help), false); return; }
     const b = e.target.closest("[data-close]"); if (!b) return;
     closePos(Number(b.dataset.close), b.dataset.pair);
   };
+  bindRisk();
+  bindBattle();
   const toggle = (id, key) => { $(id).onclick = () => { ui[key] = !ui[key]; $(id).classList.toggle("active", ui[key]); renderChart(); }; };
   toggle("maBtn", "showMA"); toggle("newsMarkBtn", "showNews"); toggle("posLineBtn", "showPos");
   $("pauseBtn").onclick = () => { ui.paused = !ui.paused; $("pauseBtn").textContent = ui.paused ? "繼續" : "暫停"; renderModeBadge(); };
@@ -647,7 +978,7 @@ bindAuth();
 renderAccountBtn();
 if (Cloud.enabled() && Cloud.user()) switchToServer(); else { enterGuest(); renderAll(); }
 extras = initExtras({
-  getContext: () => ({ mode, username: Cloud.user(), account: state, prices: market.prices(), progress, resets, catchingUp, equityPoints: equityPts.slice() }),
+  getContext: () => ({ mode, username: Cloud.user(), account: state, prices: market.prices(), progress, resets, catchingUp, equityPoints: equityPts.slice(), book }),
   refresh: async () => {
     if (mode !== "server") return true;
     if (busy) throw new Error("正在處理交易或更新行情，請稍後再試");

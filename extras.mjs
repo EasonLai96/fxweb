@@ -1,11 +1,11 @@
-import { feeFor, LEVERAGES } from './engine.mjs';
-import { getAvatar, saveAvatar, removeAvatar, avatarImage, DEFAULT_AVATAR_URL } from './avatar.mjs';
+import { feeFor, LEVERAGES } from './engine.mjs?v=20261016a';
+import { getAvatar, saveAvatar, removeAvatar, avatarImage, DEFAULT_AVATAR_URL } from './avatar.mjs?v=20261016a';
 
 function defaultAvatarImg() {
   const img = document.createElement('img'); img.alt = '預設分享頭像'; img.src = DEFAULT_AVATAR_URL; return img;
 }
-import { drawShareCard } from './share-card.mjs';
-import makeQR from './qr-code.mjs';
+import { drawShareCard } from './share-card.mjs?v=20261016a';
+import makeQR from './qr-code.mjs?v=20261016a';
 
 const qr = makeQR(0, 'M');
 qr.addData('https://easonlai96.github.io/fxweb/');
@@ -101,7 +101,7 @@ export function initExtras({ getContext, refresh, onToast = () => {} }) {
   function open(kind) {
     if (otherOverlay()) { onToast('請先完成或關閉目前的視窗。'); return; }
     opener = document.activeElement; active = kind; generation++; releaseImage(); body.replaceChildren();
-    title.textContent = { achievements: '我的成就', stats: '練習統計', share: '分享練習快照', tutorial: '六步認識交易' }[kind];
+    title.textContent = { achievements: '成就冊', stats: '練習統計', share: '分享練習快照', tutorial: '六步認識交易' }[kind];
     if (!dialog.open) dialog.showModal();
     if (kind === 'achievements') renderAchievements();
     if (kind === 'stats') renderStats();
@@ -130,14 +130,33 @@ export function initExtras({ getContext, refresh, onToast = () => {} }) {
     if (c.mode === 'server' && c.progress?.trackingNote) body.append(note(c.progress.trackingNote));
     if (navigator.onLine === false || c.catchingUp) body.append(note('目前離線或伺服器補算中，以上為已取得的紀錄，並非最新確認值。'));
   }
+  function renderBook(book) {
+    const n = book.count(), summary = el('div', 'ach-summary');
+    const bar = el('div', 'ach-bar'), fill = el('i'); fill.style.width = `${n / book.total * 100}%`; bar.append(fill);
+    summary.append(el('strong', '', `已解鎖 ${n} / ${book.total}`), bar);
+    const grid = el('div', 'ach-grid'), got = book.unlocked();
+    for (const def of book.list) {
+      const ts = got[def.id], card = el('div', `ach-card ${ts ? 'unlocked' : 'locked'}`);
+      card.append(el('span', 'ach-medal', ts ? '🏅' : '❔'), el('span', 'ach-name', ts ? def.name : '？？？'), el('span', 'ach-desc', ts ? def.desc : def.hint));
+      if (ts) card.append(el('span', 'ach-date', ts.slice(0, 10)));
+      else if (def.follow) {
+        const b = el('button', 'ach-follow-btn', '去 bilibili 關注'); b.type = 'button';
+        b.addEventListener('click', () => { window.open(book.followUrl, '_blank', 'noopener'); book.unlock(def.id); renderAchievements(); });
+        card.append(b);
+      }
+      grid.append(card);
+    }
+    body.append(summary, grid, note('成就冊記錄在這台裝置（訪客、各登入帳號分開保存），訪客、登入與經典戰役都能解鎖。'));
+  }
   function renderAchievements() {
     const c = context(); body.replaceChildren();
+    if (c.book) renderBook(c.book);
     if (c.mode !== 'server') {
-      body.append(el('div', 'fx-extra-callout', '成就只記錄伺服器帳戶的練習歷程。'), note('請使用頁面上的「登入」建立或登入帳戶。訪客不會解鎖或累積成就，也不會把本機成績轉為伺服器成就。')); return;
+      body.append(el('h3', '', '練習里程碑'), note('里程碑由伺服器記錄，登入後才會累積；訪客與經典戰役不計。')); return;
     }
     const achievements = c.progress?.achievements;
-    body.append(note('由伺服器記錄，僅供遊戲練習；不是交易能力或收益的保證。'));
-    if (!Array.isArray(achievements) || !achievements.length) { body.append(el('div', 'fx-extra-callout', '尚無成就資料，請稍後再查看。')); return; }
+    body.append(el('h3', '', '練習里程碑'), note('由伺服器記錄，僅供遊戲練習；不是交易能力或收益的保證。'));
+    if (!Array.isArray(achievements) || !achievements.length) { body.append(el('div', 'fx-extra-callout', '尚無里程碑資料，請稍後再查看。')); return; }
     const list = el('ul', 'fx-extra-achievements');
     for (const a of achievements) {
       const item = el('li', a.unlockedAt ? 'fx-extra-unlocked' : '');
@@ -279,7 +298,7 @@ export function initExtras({ getContext, refresh, onToast = () => {} }) {
     const c = context();
     if (active === 'share' && identity(c) !== shareIdentity) { generation++; releaseImage(); renderShare(); }
     if (active === 'stats' || active === 'achievements') {
-      const signature = JSON.stringify([active, c.mode, c.progress, c.resets, c.account?.log, c.catchingUp, navigator.onLine]);
+      const signature = JSON.stringify([active, c.mode, c.progress, c.resets, c.account?.log, c.catchingUp, navigator.onLine, c.book?.owner, c.book?.unlocked()]);
       if (signature !== statsSignature) { statsSignature = signature; active === 'stats' ? renderStats() : renderAchievements(); }
     }
   }

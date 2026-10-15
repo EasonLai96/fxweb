@@ -7,7 +7,7 @@ import { PAIRS } from "../../market.mjs";
 // 登入憑證：隨機 token，以 Authorization: Bearer 傳遞；資料庫只存 token 的 SHA-256。
 // 前端在 github.io、API 在 workers.dev，跨站 cookie 常被瀏覽器擋，所以用 Bearer token 而不是 cookie。
 
-import { newGame, advance, openOrder, closeOrder, resetGame, borrowLoan, repayLoan, view, GameError, PERSIST_EVERY, ensureSecureGame, ensureMarketMode } from "./game.js";
+import { newGame, advance, openOrder, closeOrder, resetGame, borrowLoan, repayLoan, addPositionMargin, refuseHelp, view, GameError, PERSIST_EVERY, ensureSecureGame, ensureMarketMode } from "./game.js";
 
 const PBKDF2_ITER = 100000;
 const SESSION_DAYS = 30;
@@ -350,6 +350,8 @@ const gameReset = (req, env) => gameAction(req, env, (g, b, t, secret) => {
 });
 const gameBorrow = (req, env) => gameAction(req, env, (g, b, t) => ({ borrowed: borrowLoan(g, b.amount, t) }));
 const gameRepay = (req, env) => gameAction(req, env, (g, b, t) => ({ repaid: repayLoan(g, b.amount, t) }));
+const gameMargin = (req, env) => gameAction(req, env, (g, b, t, secret) => ({ margin: addPositionMargin(g, b.id, b.amount, b.source, t, secret) }));
+const gameRefuse = (req, env) => gameAction(req, env, (g, b, t) => ({ refused: refuseHelp(g, b.id, t) }));
 async function leaderboardList(req, env) {
   await consumeRate(env, "board-ip:" + (req.headers.get("CF-Connecting-IP") || "local"), 90, 60000);
   return { status: 200, body: { leaderboard: await publicLeaderboard(env, now()) } };
@@ -412,6 +414,8 @@ const ROUTES = {
   "POST /api/game/reset": gameReset,
   "POST /api/game/borrow": gameBorrow,
   "POST /api/game/repay": gameRepay,
+  "POST /api/game/margin": gameMargin,
+  "POST /api/game/refuse-help": gameRefuse,
   "GET /api/leaderboard": leaderboardList,
   "GET /api/leaderboard/me": leaderboardMe,
   "POST /api/leaderboard/join": leaderboardJoin,

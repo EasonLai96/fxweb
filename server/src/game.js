@@ -232,6 +232,29 @@ export function repayLoan(g, amount, now) {
   return r;
 }
 
+// 風險提醒的三個選項：補保證金（source='cash'，從可用保證金撥入）、借款補倉（source='loan'）、暫不處理。
+export function addPositionMargin(g, id, amount, source, now, marketSecret) {
+  requireCaughtUp(g, now);
+  if (!Number.isSafeInteger(id)) throw new GameError('持倉編號無效');
+  if (typeof amount !== 'number' || !Number.isFinite(amount)) throw new GameError('補倉金額無效');
+  if (source !== 'cash' && source !== 'loan') throw new GameError('補倉來源錯誤');
+  const prices = accountPrices(g, marketSecret);
+  const r = source === 'loan'
+    ? E.borrowToMargin(g.account, prices, id, amount, now)
+    : E.addMargin(g.account, prices, id, amount, now);
+  if (!r.ok) throw new GameError(r.error);
+  trimAccount(g.account);
+  return r;
+}
+export function refuseHelp(g, id, now) {
+  requireCaughtUp(g, now);
+  if (!Number.isSafeInteger(id)) throw new GameError('持倉編號無效');
+  const pos = g.account.positions.find(p => p.id === id);
+  if (!pos) throw new GameError('找不到持倉（可能已被強制平倉）');
+  pos.refusedHelp = true;
+  return { id, refused: true };
+}
+
 export function resetGame(g, now = g.lastStepAt, marketSecret) {
   resetProgress(g, now);
   E.resetAccount(g.account);

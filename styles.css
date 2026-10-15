@@ -434,3 +434,83 @@ html[data-theme="night"] .primary-button{background:var(--accent);color:#0b2a1e}
 .rc-ack input{width:17px;height:17px;accent-color:var(--accent-deep)}
 .trade-button.is-busy{opacity:.6;pointer-events:none}
 @media(max-width:720px){.balance-lead .eyebrow{display:block!important;font-size:10px}.balance-lead .eyebrow{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+
+/* ===== 補倉 / 風險提醒 ===== */
+.pos-actions{display:flex;gap:6px}
+.help-btn{color:var(--risk-text)}
+.loan-tag{color:#8a6bd1;background:#f1ebff}
+html[data-theme="night"] .loan-tag{color:#c7b2ff;background:#2e2747}
+.modal-icon.loss{background:var(--tint-red);color:var(--down);font-weight:900}
+.risk-modal{width:min(470px,100%)}
+.risk-detail{background:var(--surface-tint);border-radius:12px;padding:10px 12px;font-size:12px;font-weight:800;color:var(--text-muted);margin-bottom:12px;line-height:1.7}
+.risk-detail b{color:var(--text-deep);font-family:'DM Mono',monospace}
+.risk-field{text-align:left}
+.risk-preview{font-size:12px;font-weight:800;color:var(--text-muted);margin-top:8px;min-height:18px}
+.risk-preview b{color:var(--text-deep)}
+.risk-free{font-size:11px;font-weight:800;color:var(--text-faint);margin-top:4px}
+.risk-actions{flex-wrap:wrap}
+.risk-actions button:disabled{opacity:.45;cursor:not-allowed}
+.outline-button.loan{color:#7d5fc4;border-color:#d9cdf5}
+html[data-theme="night"] .outline-button.loan{color:#c7b2ff;border-color:#4a3f6e}
+@media(max-width:720px){.pos-actions{flex-direction:column;gap:4px}.pos-actions .close-btn{padding:5px 8px}}
+
+/* ===== 經典戰役 ===== */
+.battle-bar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:16px;padding:16px 22px;border-radius:18px;background:linear-gradient(120deg,#203e3b,#2d5148);color:#e7f6ee;box-shadow:var(--shadow-panel)}
+.battle-bar .section-kicker{color:#9fd3bb}
+.battle-bar-info{display:grid;grid-template-columns:auto auto 1fr;align-items:baseline;gap:4px 14px;min-width:0;flex:1}
+.battle-bar-info .section-kicker{grid-column:1/-1}
+.battle-bar-info strong{font-size:18px;font-weight:900}
+.battle-date{font:500 20px 'DM Mono',monospace;color:#ffe9a8}
+.battle-bar-info small{font-size:12px;font-weight:800;color:#b5d6c7}
+.battle-meter{grid-column:1/-1;height:6px;border-radius:99px;background:#ffffff22;overflow:hidden;margin-top:6px}
+.battle-meter i{display:block;height:100%;background:#ffd36e;border-radius:99px;transition:width .3s}
+.battle-bar-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.battle-bar .primary-button{background:#ffd36e;color:#3a2f10}
+.battle-bar .outline-button{background:transparent;color:#e7f6ee;border-color:#ffffff40}
+.battle-bar button:disabled{opacity:.45}
+.mode-badge.battle{background:#fff3cf;color:#8a6a12}
+html[data-theme="night"] .mode-badge.battle{background:#3a3218;color:#ffd36e}
+.ticker-tag.battle,.nf-tag.battle{background:#fff3cf;color:#8a6a12}
+.nf-tag.ach{background:#fff3cf;color:#8a6a12}
+.battle-modal{width:min(560px,100%)}
+.battle-list{display:grid;gap:10px;text-align:left;margin-top:6px}
+.battle-card{border:1px solid var(--border);border-radius:14px;padding:13px 15px;background:var(--surface-tint)}
+.battle-card-head{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.battle-card-head strong{font-size:15px;font-weight:900}
+.battle-pair{font:500 12px 'DM Mono',monospace;color:var(--accent-deep);background:var(--tint-green);border-radius:6px;padding:2px 7px}
+.battle-card p{margin:6px 0;font-size:12px}
+.battle-card small{font-size:11px;font-weight:700;color:var(--text-faint)}
+.battle-card small a{color:var(--green-text)}
+.battle-card-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+.battle-card-actions button{padding:8px 14px;font-size:12px}
+@media(max-width:720px){.battle-bar{flex-direction:column;align-items:stretch;padding:13px 14px;margin-bottom:10px}.battle-bar-actions{justify-content:stretch}.battle-bar-actions button{flex:1}.battle-date{font-size:16px}}
+@media(max-width:430px){#battleBtn{font-size:11px}}
+
+/* ===== 成就冊 ===== */
+.ach-summary{display:flex;align-items:center;gap:12px;margin:4px 0 14px}
+.ach-summary strong{font-size:15px;font-weight:900}
+.ach-bar{flex:1;height:8px;border-radius:99px;background:var(--range-rest);overflow:hidden}
+.ach-bar i{display:block;height:100%;background:linear-gradient(90deg,#ffd36e,#f2a76b)}
+.ach-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin-bottom:6px}
+.ach-card{border:1px solid var(--border);border-radius:13px;padding:12px 11px;background:var(--surface-tint);min-height:118px;display:flex;flex-direction:column;gap:5px;text-align:left}
+.ach-card.unlocked{border-color:#f0cf7a;background:linear-gradient(160deg,#fff9e6,#fff2cc)}
+html[data-theme="night"] .ach-card.unlocked{border-color:#6b5a26;background:linear-gradient(160deg,#2e2a17,#3a3218)}
+.ach-medal{font-size:20px;line-height:1}
+.ach-name{font-size:13px;font-weight:900;line-height:1.35;color:var(--text)}
+.ach-card.locked .ach-name{color:var(--text-muted)}
+.ach-desc{font-size:11px;line-height:1.5;color:var(--text-muted);font-weight:700;flex:1}
+.ach-date{font:500 10px 'DM Mono',monospace;color:var(--text-faint)}
+.ach-card.unlocked .ach-date{color:#a8892f}
+.ach-follow-btn{margin-top:3px;border:0;border-radius:8px;padding:8px 6px;font-size:11px;font-weight:900;background:#fb7299;color:#fff;cursor:pointer}
+@media(max-width:560px){.ach-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* ===== 天文數字防護：數字再長也不能把按鈕擠出卡片 ===== */
+.position-row{grid-template-columns:minmax(0,1.25fr) minmax(0,.8fr) minmax(0,.8fr) minmax(0,.8fr) minmax(0,.9fr) auto}
+.position-row>*{min-width:0}
+.pos-cell strong,.pos-name small,.pos-cell small{overflow:hidden;text-overflow:ellipsis}
+.pos-name small{overflow-wrap:anywhere}
+.pos-actions,.position-row>.close-btn{flex:none;justify-self:end}
+.balance-strip>*{min-width:0}
+.metric strong,.money-large{overflow:hidden;text-overflow:ellipsis}
+@media(max-width:1250px){.position-row{grid-template-columns:minmax(0,1.2fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) auto}}
+@media(max-width:720px){.position-row{grid-template-columns:minmax(0,1fr) auto auto}}
