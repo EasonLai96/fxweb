@@ -1,0 +1,272 @@
+import { equity, feeFor } from './engine.mjs';
+
+const WELCOME_KEY = 'fxweb.extras.welcome.v1';
+const finite = value => typeof value === 'number' && Number.isFinite(value);
+const money = value => finite(value) ? new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value) : '—';
+const number = value => finite(value) ? value.toLocaleString('zh-TW') : '—';
+const date = value => {
+  const d = new Date(value);
+  return value != null && Number.isFinite(d.getTime()) ? d.toLocaleString('zh-TW', { hour12: false }) : '未提供';
+};
+function el(tag, cls, text) {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text != null) node.textContent = text;
+  return node;
+}
+function button(text, action, primary = false) {
+  const b = el('button', `fx-extra-button${primary ? ' fx-extra-primary' : ''}`, text);
+  b.type = 'button'; b.addEventListener('click', action); return b;
+}
+function note(text) { return el('p', 'fx-extra-note', text); }
+
+// Server stats are authoritative; absent fields are deliberately not inferred from cash.
+function statsFor(context) {
+  if (context.mode === 'server') {
+    const s = context.progress?.stats || {};
+    return { closed: s.closedTrades, wins: s.wins, net: s.netRealizedPnl, fees: s.feesPaid, resets: context.resets ?? context.progress?.resets };
+  }
+  const log = Array.isArray(context.account?.log) ? context.account.log : [];
+  const closes = log.filter(x => x.type === 'close' && finite(x.pnl));
+  const fees = log.reduce((total, x) => total + (finite(x.fee) ? x.fee : 0), 0);
+  const entryFees = new Map(log.filter(x => x.type === 'open' && finite(x.fee)).map(x => [x.id, x.fee]));
+  const closedIds = new Set(closes.map(x => x.id));
+  const closedFees = log.reduce((total, x) => total + (x.type === 'open' && closedIds.has(x.id) && finite(x.fee) ? x.fee : 0), 0);
+  return { closed: closes.length, wins: closes.filter(x => entryFees.has(x.id) && x.pnl - entryFees.get(x.id) > 1e-9).length,
+    net: closes.reduce((total, x) => total + x.pnl, 0) - closedFees, fees, resets: context.resets };
+}
+function statRows(context) {
+  const s = statsFor(context);
+  return [['平倉數', number(s.closed)], ['勝率', finite(s.closed) && s.closed > 0 && finite(s.wins) ? `${(s.wins / s.closed * 100).toFixed(1)}%` : '—'],
+    ['淨已實現損益', money(s.net)], ['費用', money(s.fees)], ['重置次數', number(s.resets)]];
+}
+
+export function initExtras({ getContext, refresh, onToast = () => {} }) {
+  if (typeof getContext !== 'function') throw new TypeError('initExtras 需要 getContext');
+  if (document.getElementById('fx-extras')) return { update() {} };
+  if (!document.querySelector('link[data-fx-extras]')) {
+    const link = document.createElement('link'); link.rel = 'stylesheet';
+    link.href = new URL('./extras.css', import.meta.url).href; link.dataset.fxExtras = '1'; document.head.append(link);
+  }
+  const root = el('section', 'fx-extras'); root.id = 'fx-extras'; root.setAttribute('aria-label', '練習工具');
+  const toolbar = el('nav', 'fx-extra-toolbar'); toolbar.setAttribute('aria-label', '練習工具'); root.append(toolbar);
+  const main = document.querySelector('main');
+  if (main) main.before(root); else (document.querySelector('.topbar') || document.body.lastElementChild)?.after(root);
+  const dialog = el('dialog', 'fx-extra-dialog'); dialog.setAttribute('aria-labelledby', 'fx-extra-title');
+  const header = el('div', 'fx-extra-heading');
+  const title = el('h2', '', ''); title.id = 'fx-extra-title'; title.tabIndex = -1;
+  const closeButton = button('關閉', () => close()); closeButton.setAttribute('aria-label', '關閉對話框');
+  header.append(title, closeButton);
+  const body = el('div', 'fx-extra-body'); dialog.append(header, body); document.body.append(dialog);
+  let active = '', opener = null, generation = 0, shareURL = '', shareIdentity = '', shareFile = null;
+  let tutorialStep = 0, leverage = 5, quizAnswer = null, statsSignature = '';
+  const context = () => getContext() || {};
+  const identity = c => `${c.mode}|${c.username || ''}`;
+  function otherOverlay() {
+    return [...document.querySelectorAll('[role="dialog"],dialog')].some(n => n !== dialog && !dialog.contains(n) &&
+      !n.closest('[hidden],.hidden') && (n.tagName !== 'DIALOG' || n.open) && n.getClientRects().length > 0);
+  }
+  function releaseImage() {
+    if (shareURL) URL.revokeObjectURL(shareURL);
+    shareURL = ''; shareFile = null;
+  }
+  function close(restore = true) {
+    if (!dialog.open) return;
+    generation++; active = ''; dialog.close(); releaseImage();
+    if (restore && !otherOverlay()) (opener?.isConnected ? opener : toolbar.lastElementChild)?.focus({ preventScroll: true });
+  }
+  dialog.addEventListener('cancel', e => { e.preventDefault(); close(); });
+  dialog.addEventListener('click', e => { if (e.target === dialog) {
+    const r = dialog.getBoundingClientRect();
+    if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) close();
+  } });
+  dialog.addEventListener('keydown', e => {
+    if (e.key !== 'Tab') return;
+    const list = [...dialog.querySelectorAll('button,a[href],input,select,textarea,[tabindex="0"]')].filter(n => !n.disabled && n.getClientRects().length);
+    const first = list[0], last = list[list.length - 1];
+    if (e.shiftKey && (document.activeElement === first || document.activeElement === title)) { e.preventDefault(); last?.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
+  });
+  function open(kind) {
+    if (otherOverlay()) { onToast('請先完成或關閉目前的視窗。'); return; }
+    opener = document.activeElement; active = kind; generation++; releaseImage(); body.replaceChildren();
+    title.textContent = { achievements: '我的成就', stats: '練習統計', share: '分享練習快照', tutorial: '六步認識交易' }[kind];
+    if (!dialog.open) dialog.showModal();
+    if (kind === 'achievements') renderAchievements();
+    if (kind === 'stats') renderStats();
+    if (kind === 'share') renderShare();
+    if (kind === 'tutorial') { tutorialStep = 0; renderTutorial(); }
+    title.focus({ preventScroll: true });
+  }
+  [['成就', 'achievements'], ['統計', 'stats'], ['分享', 'share'], ['新手', 'tutorial']].forEach(([label, kind]) => toolbar.append(button(label, () => open(kind))));
+  let welcomed = false;
+  try { welcomed = localStorage.getItem(WELCOME_KEY) === '1'; } catch { /* storage may be disabled */ }
+  const welcome = el('div', 'fx-extra-welcome');
+  function dismissWelcome() { try { localStorage.setItem(WELCOME_KEY, '1'); } catch { /* optional persistence */ } welcome.remove(); }
+  if (!welcomed) {
+    const copy = el('div'); copy.append(el('strong', '', '第一次來？先用 2 分鐘認識風險。'), note('純教學，不會操作你的帳戶；也可以隨時從「新手」重新開始。'));
+    const actions = el('div', 'fx-extra-actions'); actions.append(button('開始導覽', () => { open('tutorial'); dismissWelcome(); }, true), button('略過', dismissWelcome));
+    welcome.append(copy, actions); root.append(welcome);
+  }
+  function renderStats() {
+    const c = context(); body.replaceChildren();
+    body.append(note(c.mode === 'server' ? '伺服器本回合紀錄（重置後重新計算）。未提供的欄位以「—」顯示。' : '訪客本機練習，不計成績；僅依目前保留的交易紀錄統計，並非完整歷史。'));
+    const grid = el('dl', 'fx-extra-stats');
+    for (const [label, value] of statRows(c)) { const item = el('div'); item.append(el('dt', '', label), el('dd', '', value)); grid.append(item); }
+    body.append(grid, note('淨已實現損益扣除已平倉交易對應的開倉費，不包含持倉浮動損益；費用欄包含本回合所有開倉費（含未平倉），不再重複扣除。勝率以扣除對應開倉費後的獲利平倉筆數／全部平倉數計，無平倉時不計勝率。缺少開倉費資料的平倉不計勝負，但仍列入平倉總數。'));
+    if (c.mode === 'server') body.append(note(`開始追蹤：${date(c.progress?.trackingSince)}。追蹤前的歷史不一定包含在內。`));
+    if (c.mode === 'server' && c.progress?.stats?.missingEntryFeeCloses > 0) body.append(note(`有 ${number(c.progress.stats.missingEntryFeeCloses)} 筆平倉缺少開倉費，勝率並非完整可比較紀錄。`));
+    if (c.mode === 'server' && c.progress?.trackingNote) body.append(note(c.progress.trackingNote));
+    if (navigator.onLine === false || c.catchingUp) body.append(note('目前離線或伺服器補算中，以上為已取得的紀錄，並非最新確認值。'));
+  }
+  function renderAchievements() {
+    const c = context(); body.replaceChildren();
+    if (c.mode !== 'server') {
+      body.append(el('div', 'fx-extra-callout', '成就只記錄伺服器帳戶的練習歷程。'), note('請使用頁面上的「登入」建立或登入帳戶。訪客不會解鎖或累積成就，也不會把本機成績轉為伺服器成就。')); return;
+    }
+    const achievements = c.progress?.achievements;
+    body.append(note('由伺服器記錄，僅供遊戲練習；不是交易能力或收益的保證。'));
+    if (!Array.isArray(achievements) || !achievements.length) { body.append(el('div', 'fx-extra-callout', '尚無成就資料，請稍後再查看。')); return; }
+    const list = el('ul', 'fx-extra-achievements');
+    for (const a of achievements) {
+      const item = el('li', a.unlockedAt ? 'fx-extra-unlocked' : '');
+      item.append(el('span', 'fx-extra-tag', a.unlockedAt ? '已解鎖' : '進行中'), el('h3', '', a.title || '未命名成就'), note(a.description || ''));
+      if (finite(a.target) && a.target > 0 && finite(a.progress)) {
+        const meter = el('progress'); meter.max = a.target; meter.value = Math.max(0, Math.min(a.target, a.progress)); meter.setAttribute('aria-label', `${a.title || '成就'}進度`);
+        item.append(meter, note(`${number(a.progress)} / ${number(a.target)}`));
+      }
+      if (a.unlockedAt) item.append(note(`解鎖時間：${date(a.unlockedAt)}`));
+      list.append(item);
+    }
+    body.append(list);
+  }
+  function renderShare() {
+    const c = context(); shareIdentity = identity(c);
+    body.replaceChildren(note('先更新帳戶，再產生不含登入憑證的資料卡。圖片只是快照，不是驗證憑證。'));
+    const label = el('label', 'fx-extra-check'); const check = el('input'); check.type = 'checkbox'; check.checked = false; check.disabled = c.mode !== 'server';
+    label.append(check, document.createTextNode('公開帳號名稱（預設不公開）')); body.append(label);
+    const status = el('p', 'fx-extra-note', '準備產生快照。'); status.setAttribute('role', 'status');
+    const preview = el('div', 'fx-extra-preview'); const output = el('div', 'fx-extra-actions');
+    const generate = button('更新並產生 PNG', () => generateCard(check.checked, status, preview, output, generate), true);
+    check.addEventListener('change', () => { generation++; releaseImage(); preview.replaceChildren(); output.replaceChildren(); status.textContent = '公開設定已變更，請重新產生圖片。'; generate.disabled = false; });
+    const copy = button('複製網站連結', async () => {
+      // Never propagate search/hash: they can contain recovery codes or credentials.
+      const url = new URL(location.href); url.search = ''; url.hash = '';
+      try { await navigator.clipboard.writeText(url.href); onToast('已複製網站連結（不含登入資訊）。'); }
+      catch { const field = el('input', 'fx-extra-link'); field.readOnly = true; field.value = url.href; field.setAttribute('aria-label', '網站連結，請手動複製'); output.append(field); field.focus(); field.select(); status.textContent = '無法自動複製，請複製下方已選取的網站連結。'; }
+    });
+    const actions = el('div', 'fx-extra-actions'); actions.append(generate, copy); body.append(actions, status, preview, output);
+  }
+  async function generateCard(includeName, status, preview, output, generate) {
+    const ticket = ++generation, before = identity(context()); generate.disabled = true; releaseImage(); preview.replaceChildren(); output.replaceChildren(); status.textContent = '正在更新帳戶…';
+    let confirmed = false;
+    try { if (typeof refresh === 'function') { const result = await refresh(); confirmed = result != null && result !== false && result.ok !== false; } }
+    catch { confirmed = false; }
+    if (ticket !== generation || active !== 'share') return;
+    const c = context();
+    if (before !== identity(c)) { renderShare(); onToast('帳戶已切換，請重新產生快照。'); return; }
+    if (c.mode === 'server' && (!confirmed || navigator.onLine === false)) { status.textContent = '未能確認伺服器最新狀態，請連線後重試；未產生新圖片。'; generate.disabled = false; return; }
+    if (c.catchingUp) { status.textContent = '伺服器仍在補算，請完成同步後再產生圖片。'; generate.disabled = false; return; }
+    const stamp = new Date();
+    const freshness = navigator.onLine === false ? '離線快照・未確認最新狀態' : c.catchingUp ? '伺服器補算中・未確認最新狀態' : c.mode === 'guest' ? '本機練習快照・非伺服器成績' : confirmed ? '已完成更新請求・僅代表產生時快照' : '更新未確認・使用目前已取得資料';
+    try {
+      const canvas = drawCard(c, includeName, stamp, freshness);
+      const blob = await new Promise((resolve, reject) => canvas.toBlob(b => b ? resolve(b) : reject(new Error('PNG 產生失敗')), 'image/png'));
+      if (ticket !== generation || active !== 'share') return;
+      shareURL = URL.createObjectURL(blob);
+      const filename = `fx-practice-${stamp.toISOString().slice(0, 10)}.png`;
+      shareFile = typeof File === 'function' ? new File([blob], filename, { type: 'image/png' }) : null;
+      const image = el('img'); image.src = shareURL; image.alt = `${c.mode === 'server' ? '伺服器帳戶快照' : '訪客練習'}；${freshness}；圖片非驗證憑證`;
+      preview.append(image);
+      const download = el('a', 'fx-extra-button fx-extra-primary', '下載 PNG'); download.href = shareURL; download.download = filename; output.append(download);
+      if (shareFile && navigator.share && navigator.canShare?.({ files: [shareFile] })) {
+        output.append(button('分享圖片', async () => {
+          if (!shareFile) return;
+          try { await navigator.share({ files: [shareFile], title: '槓桿交易練習場', text: '虛構行情練習快照，圖片非驗證憑證。' }); }
+          catch (error) { if (error.name !== 'AbortError') onToast('無法分享圖片，請改用下載 PNG。', true); }
+        }));
+      }
+      status.textContent = `${freshness}。產生時間：${date(stamp)}。`;
+    } catch { status.textContent = '圖片產生失敗，請稍後重試。'; }
+    finally { if (ticket === generation) generate.disabled = false; }
+  }
+  function renderTutorial() {
+    body.replaceChildren();
+    const steps = [
+      ['多與空，先看方向', '做多是在價格上漲時獲利；做空是在價格下跌時獲利。方向相反就會虧損，新聞也不保證價格走向。'],
+      ['保證金與槓桿', '保證金不是購買倉位的全額。名目倉位＝保證金 × 槓桿；槓桿同時放大獲利與虧損風險。'],
+      ['費用與強制平倉', '本遊戲開倉即收費，槓桿越高手續費越高。虧損達保證金 80% 時會強平；跳空可能穿過強平價，帳戶權益甚至可能為負。'],
+      ['平倉才結算', '持倉中的浮動損益會隨價格變動。按下持倉卡的「平倉」才結束該筆交易並結算；已支付的開倉費不會退回。'],
+      ['登入與救援碼', '訪客只在本機練習，不計成績。登入後由伺服器計算。救援碼只顯示一次，請另存安全處，切勿放進分享圖片、連結或傳給他人。'],
+      ['離線不是暫停風險', '伺服器行情會繼續前進，關閉分頁不會停止持倉風險。回來時可能需要補算並發生強平；離線、補算中或更新失敗時，不要把舊畫面當成最新狀態。'],
+    ];
+    const progress = el('p', 'fx-extra-step', `新手導覽 ${tutorialStep + 1} / 6`);
+    body.append(progress, el('h3', '', steps[tutorialStep][0]), el('p', 'fx-extra-prose', steps[tutorialStep][1]), el('div', 'fx-extra-callout', '這是教學，不操作真帳戶、不送出訂單，也不更改你的練習帳戶。'));
+    if (tutorialStep === 1) {
+      const label = el('label', 'fx-extra-range-label', '試算：固定保證金 $100，調整槓桿 1–10 倍'); label.htmlFor = 'fx-extra-leverage';
+      const range = el('input', 'fx-extra-range'); range.type = 'range'; range.min = '1'; range.max = '10'; range.step = '1'; range.value = String(leverage); range.id = 'fx-extra-leverage';
+      const result = el('output', 'fx-extra-calculation'); result.htmlFor = range.id;
+      const recalc = () => { leverage = Number(range.value); result.textContent = `${leverage}× → 名目倉位 ${money(100 * leverage)}，開倉費 ${money(feeFor(100 * leverage, leverage))}。以 EUR/USD 做多為例，價格反向 1% 約虧 ${money(leverage)}（不含費用）。`; };
+      range.addEventListener('input', recalc); recalc(); body.append(label, range, result);
+    }
+    if (tutorialStep === 3) {
+      const fieldset = el('fieldset', 'fx-extra-quiz'); fieldset.append(el('legend', '', '小練習：做空後價格上漲，未計費用時會？'));
+      const feedback = el('p', 'fx-extra-note'); feedback.setAttribute('role', 'status');
+      const feedbackText = answer => answer === '虧損' ? '答對了。做空遇到上漲會虧損；槓桿不會改變方向，只會放大影響。' : '再想想：做空期待價格下跌，價格上漲會產生虧損。';
+      for (const answer of ['獲利', '虧損']) {
+        const label = el('label', 'fx-extra-check'), input = el('input'); input.type = 'radio'; input.name = 'fx-extra-quiz'; input.value = answer; input.checked = quizAnswer === answer;
+        input.addEventListener('change', () => { quizAnswer = answer; feedback.textContent = feedbackText(answer); }); label.append(input, document.createTextNode(answer)); fieldset.append(label);
+      }
+      if (quizAnswer) feedback.textContent = feedbackText(quizAnswer);
+      body.append(fieldset, feedback);
+    }
+    const actions = el('div', 'fx-extra-actions'); const prev = button('上一步', () => { tutorialStep--; renderTutorial(); title.focus(); }); prev.disabled = tutorialStep === 0;
+    actions.append(prev, button(tutorialStep === 5 ? '完成導覽' : '下一步', () => { if (tutorialStep === 5) { dismissWelcome(); close(); } else { tutorialStep++; renderTutorial(); title.focus(); } }, true), button('退出教學', () => close())); body.append(actions);
+  }
+  function update() {
+    if (dialog.open && otherOverlay()) { close(false); return; }
+    const c = context();
+    if (active === 'share' && identity(c) !== shareIdentity) { generation++; releaseImage(); renderShare(); }
+    if (active === 'stats' || active === 'achievements') {
+      const signature = JSON.stringify([active, c.mode, c.progress, c.resets, c.account?.log, c.catchingUp, navigator.onLine]);
+      if (signature !== statsSignature) { statsSignature = signature; active === 'stats' ? renderStats() : renderAchievements(); }
+    }
+  }
+  // Auth/recovery always take priority, including overlays opened by an async response.
+  const observer = new MutationObserver(() => { if (dialog.open && otherOverlay()) close(false); });
+  observer.observe(document.body, { subtree: true, attributes: true, attributeFilter: ['class', 'hidden', 'open'] });
+  return { update };
+}
+
+function drawCard(context, includeName, stamp, freshness) {
+  const canvas = document.createElement('canvas'); canvas.width = 1080; canvas.height = 1120;
+  const ctx = canvas.getContext('2d'); if (!ctx) throw new Error('Canvas unavailable');
+  const bg = ctx.createLinearGradient(0, 0, 1080, 1120); bg.addColorStop(0, '#142e30'); bg.addColorStop(1, '#294b43'); ctx.fillStyle = bg; ctx.fillRect(0, 0, 1080, 1120);
+  ctx.strokeStyle = '#ffffff09'; ctx.lineWidth = 1;
+  for (let x = 0; x < 1080; x += 60) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 1120); ctx.stroke(); }
+  for (let y = 0; y < 1120; y += 60) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(1080, y); ctx.stroke(); }
+  function text(value, x, y, size = 28, color = '#eaf7ef', weight = '500', max = 936) {
+    ctx.fillStyle = color; ctx.font = `${weight} ${size}px "Noto Sans TC", "Microsoft JhengHei", sans-serif`; ctx.fillText(String(value), x, y, max);
+  }
+  text('FX PRACTICE ROOM', 72, 88, 22, '#a9dfc5', '700');
+  text('槓桿交易練習場', 72, 164, 54, '#f3fff8', '700');
+  text(context.mode === 'server' ? '伺服器帳戶快照' : '訪客練習', 72, 223, 30, '#b7e9d0');
+  text(includeName && context.mode === 'server' ? `帳號：${String(context.username || '').slice(0, 40)}` : '帳號名稱不公開', 72, 273, 24, '#bbcec6');
+  ctx.fillStyle = '#ffffff0b'; ctx.fillRect(60, 310, 960, 202);
+  text('帳戶總權益 · USD', 88, 361, 25, '#bbcec6');
+  let total = null;
+  try { if (context.account) total = equity(context.account, context.prices || {}); } catch { /* absent state */ }
+  text(money(total), 88, 451, 66, '#d1ffe5', '700', 900);
+  const rows = statRows(context);
+  rows.forEach(([label, value], i) => {
+    const x = i % 2 ? 566 : 88, y = 577 + Math.floor(i / 2) * 116;
+    text(label, x, y, 24, '#b7ccc3', '500', 420); text(value, x, y + 48, 36, '#f3fff8', '700', 420);
+  });
+  text(context.mode === 'server' ? '統計：本回合；追蹤前紀錄可能不完整' : '統計：本機保留紀錄；不計成績', 72, 895, 20, '#b7ccc3');
+  ctx.fillStyle = '#a7d9bd'; ctx.fillRect(72, 913, 44, 4);
+  text('圖片非驗證憑證', 72, 965, 30, '#d4f4df', '700');
+  text(`產生日期：${date(stamp)}`, 72, 1008, 22, '#c0d6cb');
+  text(freshness, 72, 1045, 22, '#c0d6cb');
+  text('虛構模擬行情，非即時報價；僅供遊戲，不構成投資建議。', 72, 1085, 21, '#b7ccc3');
+  return canvas;
+}

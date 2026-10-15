@@ -5,6 +5,7 @@
 // 2. 開倉、平倉、強平都在伺服器算，瀏覽器送不出「我的現金是多少」這種資料。
 // 3. 行情依「真實經過時間」前進，不能暫停、倒轉或快轉。
 import * as E from "../../engine.mjs";
+import { ensureProgress, recordOpen, recordClose, resetProgress, progressView } from "./progress.js";
 import { createMarketState, secureMarketState, stepMarket, publicNews, PAIRS, NEWS_SETTLE } from "../../market.mjs";
 
 export const TICK_MS = 1500;          // 每 1.5 秒一根 K 線
@@ -41,13 +42,16 @@ export function newGame(now) {
   const market = createMarketState(undefined, { secret: newSecret() });
   const account = E.createAccount(START_CASH);
   account.eq = [];
-  return { market, account, lastStepAt: now, resets: 0 };
+  const g = { market, account, lastStepAt: now, resets: 0 };
+  ensureProgress(g, now, true);
+  return g;
 }
 
 // 依經過時間推進行情，逐根檢查強平。回傳這次推進產生的事件。
 // 結果只取決於存檔內容與 now，所以同一份存檔重算幾次結果都一樣（沒寫回也不會出錯）。
 export function advance(g, now) {
   if (!Number.isFinite(now) || !Number.isFinite(g.lastStepAt)) throw new Error("Invalid game clock");
+  ensureProgress(g, now);
   const due = Math.max(0, Math.floor((now - g.lastStepAt) / TICK_MS));
   const n = Math.min(due, MAX_CATCHUP);
   if (n === 0) return { steps: 0, events: [], skipped: false, pendingSteps: 0 };
@@ -61,7 +65,15 @@ export function advance(g, now) {
     const t = g.lastStepAt + (i + 1) * TICK_MS;
     const { prices } = stepMarket(g.market);
     const step = g.market.step;
-    for (const ev of E.settleTick(a, prices, t)) events.push({ ...ev, step });
+    // Snapshot position metadata before settleTick removes liquidated positions.
+    const positions = new Map(a.positions.map(pos => [pos.id, pos]));
+    for (const ev of E.settleTick(a, prices, t)) {
+      if (ev.type === "liquidated") {
+        const pos = positions.get(ev.id);
+        recordClose(g, pos, E.unrealizedPnl(pos, prices[pos.pair]), "liquidated", t);
+      }
+      events.push({ ...ev, step });
+    }
     if (step % EQ_EVERY === 0) {
       a.eq.push(Math.round(E.equity(a, prices) * 100) / 100);
       if (a.eq.length > EQ_KEEP) a.eq.splice(0, a.eq.length - EQ_KEEP);
@@ -88,6 +100,8 @@ export function openOrder(g, { pair, side, leverage, margin }, now) {
   margin = Math.floor(margin * 100) / 100;
   const r = E.openPosition(g.account, { ...g.market.prices }, { pair, side, leverage, notional: margin * leverage, time: now });
   if (!r.ok) throw new GameError(r.error);
+  recordOpen(g, r.position, now);
+  if (g.account.log.length > LOG_KEEP) g.account.log.splice(0, g.account.log.length - LOG_KEEP);
   return r.position;
 }
 
@@ -96,10 +110,13 @@ export function closeOrder(g, id, now) {
   const pos = g.account.positions.find(p => p.id === id);
   if (!pos) throw new GameError("找不到持倉（可能已被強制平倉）");
   const r = E.closePosition(g.account, id, g.market.prices[pos.pair], now);
+  recordClose(g, pos, r.pnl, "manual", now);
+  if (g.account.log.length > LOG_KEEP) g.account.log.splice(0, g.account.log.length - LOG_KEEP);
   return r.pnl;
 }
 
-export function resetGame(g) {
+export function resetGame(g, now = g.lastStepAt) {
+  resetProgress(g, now);
   E.resetAccount(g.account);
   g.account.eq = [];
   g.resets = (g.resets || 0) + 1;
@@ -131,5 +148,6 @@ export function view(g, since, events = [], now = Date.now()) {
     },
     events: events.filter(e => !Number.isInteger(since) || e.step > since),
     resets: g.resets || 0,
+    progress: progressView(g, now),
   };
 }

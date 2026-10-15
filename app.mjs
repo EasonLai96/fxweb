@@ -1,3 +1,4 @@
+import { initExtras } from "./extras.mjs";
 import * as E from "./engine.mjs";
 import { createMarket, PAIR_NAMES, NEWS_SETTLE } from "./market.mjs";
 import * as Store from "./store.mjs";
@@ -15,11 +16,13 @@ let state = null;
 let busy = false;           // 伺服器請求進行中
 let lastOk = 0;             // 上次成功連上伺服器的時間
 let modeEpoch = 0, catchingUp = false;
+let progress = null, resets = 0, extras = null;
 // 切換帳戶/登出後，舊請求不可覆蓋新畫面。
 const currentRequest = epoch => epoch === modeEpoch && mode === "server";
 
 function enterGuest() {
   modeEpoch++; busy = false; catchingUp = false; lastOk = 0;
+  progress = null; resets = 0;
   mode = "guest";
   market = createMarket(Date.now() & 0x7fffffff);
   state = Store.load() || E.createAccount(10000);
@@ -29,6 +32,7 @@ function enterGuest() {
 
 function enterServer() {
   modeEpoch++; busy = false; catchingUp = false; lastOk = 0;
+  progress = null; resets = 0;
   mode = "server";
   market = createRemoteMarket();
   state = E.createAccount(10000);
@@ -257,6 +261,7 @@ function renderNewsCenter() {
 /* ---------- 主流程 ---------- */
 function renderAll() {
   renderModeBadge();
+  extras?.update();
   if (mode === "server" && !market.ready()) return;
   const prices = market.prices();
   renderPairs();
@@ -292,6 +297,7 @@ function loop() {
 // 套用伺服器回傳的完整畫面資料
 function applyServer(v) {
   catchingUp = !!v.catchingUp;
+  progress = v.progress || null; resets = v.resets || 0;
   const fresh = market.apply(v);
   const a = v.account;
   state.cash = a.cash; state.startingCash = a.startingCash; state.nextId = a.nextId;
@@ -514,4 +520,21 @@ bind();
 bindAuth();
 renderAccountBtn();
 if (Cloud.enabled() && Cloud.user()) switchToServer(); else { enterGuest(); renderAll(); }
+extras = initExtras({
+  getContext: () => ({ mode, username: Cloud.user(), account: state, prices: market.prices(), progress, resets, catchingUp }),
+  refresh: async () => {
+    if (mode !== "server") return true;
+    if (busy) throw new Error("正在處理交易或更新行情，請稍後再試");
+    const epoch = modeEpoch;
+    busy = true;
+    try {
+      const result = await Cloud.game.state(market.ready() ? market.step() : -1);
+      if (!currentRequest(epoch)) throw new Error("帳戶已切換，請重新開啟分享");
+      applyServer(result);
+      if (catchingUp) throw new Error("離線行情結算中，請完成後再分享");
+      return true;
+    } finally { if (epoch === modeEpoch) busy = false; }
+  },
+  onToast: toast,
+});
 setInterval(loop, 1500);

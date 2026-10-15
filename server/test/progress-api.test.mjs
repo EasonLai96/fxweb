@@ -1,0 +1,20 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import worker from "../src/index.js";
+import {createD1} from "./d1shim.mjs";
+test("progress CAS upgrade, idempotency, and untrusted payload isolation", async()=>{
+ const env={DB:createD1(new URL("../migrations",import.meta.url).pathname),ALLOWED_ORIGINS:"https://easonlai96.github.io"};let token;
+ const call=async(path,body,method="POST")=>{const r=await worker.fetch(new Request("https://test"+path,{method,headers:{"Content-Type":"application/json",...(token?{Authorization:"Bearer "+token}:{})},body:method==="GET"?undefined:JSON.stringify(body)}),env);const data=await r.json();assert.equal(r.status, path==="/api/register"?201:200,JSON.stringify(data));return data;};
+ token=(await call("/api/register",{username:"progress_user",password:"strong-password"})).token;
+ let g=await call("/api/game",null,"GET");assert.equal(g.progress.stats.closedTrades,0);
+ const o={pair:"EUR/USD",side:1,leverage:1,margin:100,requestId:"open-once",progress:{stats:{wins:9999},achievements:["all"]}};
+ await call("/api/game/open",o);g=await call("/api/game/open",o);assert.equal(g.progress.stats.openedTrades,1);assert.equal(g.progress.stats.wins,0);
+ const id=g.account.positions[0].id;
+ await call("/api/game/close",{id,requestId:"close-once"});g=await call("/api/game/close",{id,requestId:"close-once"});assert.equal(g.progress.stats.closedTrades,1);
+ const unlocked=g.progress.achievements.filter(a=>a.unlockedAt!=null).map(a=>a.id);assert.ok(unlocked.length>=2);
+ g=await call("/api/game/reset",{requestId:"reset-once"});assert.equal(g.progress.stats.closedTrades,0);assert.deepEqual(g.progress.achievements.filter(a=>a.unlockedAt!=null).map(a=>a.id),unlocked);
+ const row=env.DB.raw.prepare("SELECT state FROM games").get(),old=JSON.parse(row.state);delete old.progress;env.DB.raw.prepare("UPDATE games SET state=?").run(JSON.stringify(old));
+ g=await call("/api/game",null,"GET");const since=g.progress.trackingSince;
+ const stored=JSON.parse(env.DB.raw.prepare("SELECT state FROM games").get().state);assert.equal(stored.progress.trackingSince,since);
+ assert.equal((await call("/api/game",null,"GET")).progress.trackingSince,since);
+});

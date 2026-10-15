@@ -1,3 +1,4 @@
+import { ensureProgress } from "./progress.js";
 // fxweb 後端：Cloudflare Worker + D1。帳號密碼登入、救援碼重設密碼、伺服器端計算的遊戲。
 // 密碼：PBKDF2-SHA256（Workers 上限 100000 次迭代）+ 每人隨機 salt。
 // 登入憑證：隨機 token，以 Authorization: Bearer 傳遞；資料庫只存 token 的 SHA-256。
@@ -253,7 +254,8 @@ async function withGame(env, userId, mutate, request = null) {
     let g, version = 0;
     if (row) { g = JSON.parse(row.state); version = row.version; }
     else g = newGame(t);
-    const upgraded = ensureSecureGame(g);
+    const progressUpgraded = ensureProgress(g, t);
+    const upgraded = ensureSecureGame(g) || progressUpgraded;
     const history = Array.isArray(g.requests) ? g.requests : [];
     const previous = request && history.find(r => r.id === request.id);
     if (previous && previous.fingerprint !== request.fingerprint)
@@ -318,7 +320,7 @@ const gameOpen = (req, env) => gameAction(req, env, (g, b, t) => {
   return { opened: pos };
 });
 const gameClose = (req, env) => gameAction(req, env, (g, b, t) => ({ closed: b.id, pnl: closeOrder(g, b.id, t) }));
-const gameReset = (req, env) => gameAction(req, env, g => { resetGame(g); return { reset: true }; });
+const gameReset = (req, env) => gameAction(req, env, (g, b, t) => { resetGame(g, t); return { reset: true }; });
 
 async function deleteAccount(req, env) {
   const user = await requireUser(req, env);
