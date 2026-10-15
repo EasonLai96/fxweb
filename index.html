@@ -105,10 +105,11 @@
             </div>
             <div>
               <div class="range-label"><label for="leverageRange">槓桿倍數</label><strong id="leverageValue">5×</strong></div>
-              <input id="leverageRange" type="range" min="1" max="10" step="1" value="5">
-              <div class="range-ticks"><span>1×</span><span>3×</span><span>5×</span><span>7×</span><span>10×</span></div>
+              <input id="leverageRange" type="range" min="0" max="11" step="1" value="4" aria-describedby="leverageNotice">
+              <div class="range-ticks"><span>1×</span><span>3×</span><span>5×</span><span>10×</span><span>50×</span><span>100×</span></div>
             </div>
           </div>
+          <p id="leverageNotice" class="leverage-warning hidden" role="status">高槓桿風險：極小波動也可能在下一根 K 線強平；跳空可能穿倉，手續費也更高。</p>
           <div class="order-preview">
             <div><span>名目倉位</span><strong id="notional">$0.00</strong></div>
             <div><span>開倉手續費</span><strong id="tradeFee">$0.00</strong></div>

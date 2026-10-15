@@ -1,4 +1,4 @@
-import { feeFor } from './engine.mjs';
+import { feeFor, LEVERAGES } from './engine.mjs';
 import { getAvatar, saveAvatar, removeAvatar, avatarImage } from './avatar.mjs';
 import { drawShareCard } from './share-card.mjs';
 import makeQR from './qr-code.mjs';
@@ -242,7 +242,7 @@ export function initExtras({ getContext, refresh, onToast = () => {} }) {
     const steps = [
       ['多與空，先看方向', '做多是在價格上漲時獲利；做空是在價格下跌時獲利。方向相反就會虧損，新聞也不保證價格走向。'],
       ['保證金與槓桿', '保證金不是購買倉位的全額。名目倉位＝保證金 × 槓桿；槓桿同時放大獲利與虧損風險。'],
-      ['費用與強制平倉', '本遊戲開倉即收費，槓桿越高手續費越高。虧損達保證金 80% 時會強平；跳空可能穿過強平價，帳戶權益甚至可能為負。'],
+      ['費用與強制平倉', '本遊戲開倉即收費，槓桿越高手續費越高。50× 時反向約 1.6% 即達強平門檻，100× 時約 0.8%；虧損達保證金 80% 時會強平。跳空可能穿過強平價，帳戶權益甚至可能為負。'],
       ['平倉才結算', '持倉中的浮動損益會隨價格變動。按下持倉卡的「平倉」才結束該筆交易並結算；已支付的開倉費不會退回。'],
       ['登入與救援碼', '訪客只在本機練習，不計成績。登入後由伺服器計算。救援碼只顯示一次，請另存安全處，切勿放進分享圖片、連結或傳給他人。'],
       ['離線不是暫停風險', '伺服器行情會繼續前進，關閉分頁不會停止持倉風險。回來時可能需要補算並發生強平；離線、補算中或更新失敗時，不要把舊畫面當成最新狀態。'],
@@ -250,10 +250,10 @@ export function initExtras({ getContext, refresh, onToast = () => {} }) {
     const progress = el('p', 'fx-extra-step', `新手導覽 ${tutorialStep + 1} / 6`);
     body.append(progress, el('h3', '', steps[tutorialStep][0]), el('p', 'fx-extra-prose', steps[tutorialStep][1]), el('div', 'fx-extra-callout', '這是教學，不操作真帳戶、不送出訂單，也不更改你的練習帳戶。'));
     if (tutorialStep === 1) {
-      const label = el('label', 'fx-extra-range-label', '試算：固定保證金 $100，調整槓桿 1–10 倍'); label.htmlFor = 'fx-extra-leverage';
-      const range = el('input', 'fx-extra-range'); range.type = 'range'; range.min = '1'; range.max = '10'; range.step = '1'; range.value = String(leverage); range.id = 'fx-extra-leverage';
+      const label = el('label', 'fx-extra-range-label', '試算：固定保證金 $100，選擇 1–10、50 或 100 倍'); label.htmlFor = 'fx-extra-leverage';
+      const range = el('input', 'fx-extra-range'); range.type = 'range'; range.min = '0'; range.max = String(LEVERAGES.length - 1); range.step = '1'; range.value = String(LEVERAGES.indexOf(leverage)); range.id = 'fx-extra-leverage';
       const result = el('output', 'fx-extra-calculation'); result.htmlFor = range.id;
-      const recalc = () => { leverage = Number(range.value); result.textContent = `${leverage}× → 名目倉位 ${money(100 * leverage)}，開倉費 ${money(feeFor(100 * leverage, leverage))}。以 EUR/USD 做多為例，價格反向 1% 約虧 ${money(leverage)}（不含費用）。`; };
+      const recalc = () => { leverage = LEVERAGES[Number(range.value)]; result.textContent = `${leverage}× → 名目倉位 ${money(100 * leverage)}，開倉費 ${money(feeFor(100 * leverage, leverage))}；反向約 ${(80 / leverage).toFixed(2)}% 就可能強平。以 EUR/USD 做多為例，價格反向 1% 約虧 ${money(leverage)}（不含費用）；跳空會更嚴重。`; };
       range.addEventListener('input', recalc); recalc(); body.append(label, range, result);
     }
     if (tutorialStep === 3) {

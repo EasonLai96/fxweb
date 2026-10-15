@@ -138,8 +138,10 @@ function renderOrder(prices, m) {
   const notional = margin * lev;
   $("orderPair").textContent = spaced(p);
   $("leverageValue").textContent = lev + "×";
-  $("leverageRange").value = lev;
-  $("leverageRange").style.setProperty("--progress", `${(lev - 1) / (E.MAX_LEVERAGE - 1) * 100}%`);
+  const levIndex = E.LEVERAGES.indexOf(lev);
+  $("leverageRange").value = levIndex;
+  $("leverageRange").style.setProperty("--progress", `${levIndex / (E.LEVERAGES.length - 1) * 100}%`);
+  $("leverageNotice").classList.toggle("hidden", lev < 50);
   $("notional").textContent = money(notional);
   $("tradeFee").textContent = money(E.feeFor(notional, lev));
   $("riskPercent").textContent = (E.LIQ_LOSS / lev * 100).toFixed(2) + "%";
@@ -372,7 +374,7 @@ function bind() {
   $("longBtn").onclick = () => order(1);
   $("shortBtn").onclick = () => order(-1);
   $("marginInput").oninput = e => { const v = Number(e.target.value); if (v > 0) { ui.margin = v; renderOrder(market.prices(), E.metrics(state, market.prices())); } };
-  $("leverageRange").oninput = e => { ui.leverage = Number(e.target.value); renderOrder(market.prices(), E.metrics(state, market.prices())); };
+  $("leverageRange").oninput = e => { ui.leverage = E.LEVERAGES[Number(e.target.value)]; renderOrder(market.prices(), E.metrics(state, market.prices())); };
   $("maxBtn").onclick = () => { const v = maxMargin(market.prices()); ui.margin = v; $("marginInput").value = v; renderOrder(market.prices(), E.metrics(state, market.prices())); };
   $("positions").onclick = e => {
     const b = e.target.closest("[data-close]"); if (!b) return;

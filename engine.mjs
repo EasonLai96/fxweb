@@ -3,8 +3,8 @@
 // price(pair) = 1 個 BASE 值多少 QUOTE。prices 是 { pair: number } 的現價表。
 // notional 一律以 USD 計。
 
-export const MAX_LEVERAGE = 10;
-export const LEVERAGES = Array.from({ length: MAX_LEVERAGE }, (_, i) => i + 1);
+export const LEVERAGES = [...Array.from({ length: 10 }, (_, i) => i + 1), 50, 100];
+export const MAX_LEVERAGE = LEVERAGES.at(-1);
 export const WARN_LOSS = 0.60;   // 虧損達保證金 60% 警告
 export const LIQ_LOSS = 0.80;    // 虧損達保證金 80% 強制平倉
 const EPS = 1e-9;
