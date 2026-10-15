@@ -154,8 +154,13 @@ test("下單檢查：槓桿、保證金、貨幣對、方向、餘額", async ()
   const { call, reg } = setup();
   const { token } = await reg("leo");
   const open = body => call("POST", "/api/game/open", { token, body: { pair: "EUR/USD", side: 1, leverage: 5, margin: 100, ...body } });
-  assert.equal((await open({ leverage: 11 })).status, 400);
-  assert.equal((await open({ leverage: 2.5 })).status, 400);
+  for (const leverage of [0, 11, 49, 51, 99, 101, 2.5, "100"]) assert.equal((await open({ leverage })).status, 400);
+  for (const leverage of [50, 100]) {
+    const order = await open({ leverage, margin: 20 });
+    assert.equal(order.status, 200, JSON.stringify(order.body));
+    assert.equal(order.body.result.opened.leverage, leverage);
+    assert.equal(order.body.result.opened.notional, leverage * 20);
+  }
   assert.equal((await open({ margin: 5 })).status, 400);
   assert.equal((await open({ margin: "100" })).status, 400);
   assert.equal((await open({ margin: Infinity })).status, 400);
