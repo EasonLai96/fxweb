@@ -28,6 +28,12 @@ async function api(method, path, body) {
   try { res = await fetch(API_BASE + path, { method, headers, signal: controller.signal, body: body === undefined ? undefined : JSON.stringify(body) }); }
   catch { throw new ApiError(0, { message: "連線失敗或逾時。交易結果可能尚未確認，請先重新整理帳戶，不要重複下單。" }); }
   finally { clearTimeout(timeout); }
+  const responseType = res.headers.get("content-type") || "";
+  if (!responseType.includes("application/json")) {
+    throw new ApiError(res.status, { message: res.status === 503 || res.status === 429
+      ? "伺服器暫時超出運算額度，請稍候重試；帳戶資料仍保存在伺服器。"
+      : `伺服器回傳異常格式（HTTP ${res.status}），請稍候再試。` });
+  }
   const data = await res.json().catch(() => ({}));
   if (res.status === 401 && data.error === "unauthorized" && auth?.token === sentToken && sentToken) { auth = null; persist(); onLogout(); }
   if (!res.ok) throw new ApiError(res.status, data);

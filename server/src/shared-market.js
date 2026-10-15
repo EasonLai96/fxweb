@@ -78,18 +78,25 @@ function context(secret) {
 export function sharedPrice(secret,tick,pair) { return context(secret).price(tick,pair); }
 export function sharedCandle(secret,tick,pair) { return context(secret).candle(tick,pair); }
 export function sharedNews(secret,tick) { return context(secret).news(tick); }
-export function makeSharedMarket(secret,headTick,{history=160}={}) {
+export function makeSharedMarket(secret,headTick,{history=160,since}={}) {
   checkTick(headTick);
   if (!Number.isSafeInteger(history)||history<1||history>10000) throw new RangeError('Invalid shared market history');
-  const req=context(secret), prices={}, candles={}, first=Math.max(0,headTick-history+1);
+  // A valid cursor needs only the new bars. In particular, an unchanged head
+  // must not recompute the whole tape just to return the current prices.
+  const delta=Number.isSafeInteger(since)&&since>=0&&since<=headTick&&headTick-since<history;
+  const req=context(secret), prices={}, candles={};
+  const first=delta ? since+1 : Math.max(0,headTick-history+1);
   for(const pair of PAIR_KEYS) {
     const series=[];
     for(let t=first;t<=headTick;t++) series.push(req.candle(t,pair));
     prices[pair]=req.price(headTick,pair); candles[pair]=series;
   }
   const news=[];
-  const earliest=Math.max(0,headTick-Math.max(history+NEWS_SETTLE,2000)+1);
-  for(let t=headTick;t>=earliest && news.length<KEEP_NEWS;t--) {
+  // Previously published releases can acquire a settled result after `since`.
+  // Full snapshots preserve the existing bounded 50-item / 2000-tick policy.
+  const earliest=delta ? Math.max(0,since-NEWS_SETTLE)
+    : Math.max(0,headTick-Math.max(history+NEWS_SETTLE,2000)+1);
+  for(let t=headTick;t>=earliest && (delta||news.length<KEEP_NEWS);t--) {
     const item=req.news(t,headTick); if(item) news.push(item);
   }
   news.reverse();

@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
-import { PAIRS, hmacSha256 } from '../../market.mjs';
+import { PAIRS, NEWS_SETTLE, hmacSha256 } from '../../market.mjs';
 import { TICK_MS, SHARED_MARKET_ALGORITHM, absoluteTick, tickAt, sharedPrice, sharedCandle, sharedNews, makeSharedMarket } from '../src/shared-market.js';
+import { newGame, view } from '../src/game.js';
 const secret='6c'.repeat(32), other='e4'.repeat(32), pairs=Object.keys(PAIRS);
 test('absolute UTC tick and validated inputs',()=>{
   assert.equal(TICK_MS,1500); assert.equal(tickAt(1499),0); assert.equal(absoluteTick(1499),0); assert.equal(absoluteTick(1500),1);
@@ -64,6 +65,69 @@ test('news releases only at its tick; reversal is delayed until settlement',()=>
     assert.equal(n.settled,head-n.step>=8);
     assert.equal(n.settled?typeof n.reversed:n.reversed,n.settled?'boolean':null);
   }
+});
+test('incremental candles and merged news match a full view',()=>{
+  const head=500000, since=head-5;
+  const previous=makeSharedMarket(secret,since), delta=makeSharedMarket(secret,head,{since});
+  const full=makeSharedMarket(secret,head);
+  assert.deepEqual(delta.prices,full.prices);
+  for(const p of pairs) {
+    assert.deepEqual(delta.candles[p],full.candles[p].filter(c=>c.t>since));
+    assert.deepEqual([...previous.candles[p],...delta.candles[p]].slice(-160),full.candles[p]);
+  }
+  const merged=new Map(previous.news.map(n=>[n.step+'|'+n.pair,n]));
+  for(const n of delta.news) merged.set(n.step+'|'+n.pair,n);
+  assert.deepEqual([...merged.values()].sort((a,b)=>a.step-b.step).slice(-50),full.news);
+  assert.deepEqual(makeSharedMarket(secret,head,{since:-1}),full);
+  assert.deepEqual(makeSharedMarket(secret,head,{since:head-160}),full);
+  assert.deepEqual(makeSharedMarket(secret,head,{since:head+1}),full);
+});
+test('game shared view chooses full by cursor and sends incremental bars',()=>{
+  const head=1180000000, now=head*TICK_MS, game=newGame(now,secret);
+  const full=view(game,undefined,[],now,secret);
+  assert.equal(full.full,true);
+  for(const since of [head-1,head]) {
+    const delta=view(game,since,[],now,secret);
+    assert.equal(delta.full,false);
+    assert.equal(delta.candles[pairs[0]].length,head-since);
+    assert.deepEqual(delta.prices,full.prices);
+  }
+  assert.equal(view(game,head-160,[],now,secret).full,true);
+});
+test('same-step delta skips 160 bars but retains the head prices',()=>{
+  const head=1180000000, delta=makeSharedMarket(secret,head,{since:head});
+  assert.equal(delta.step,head);
+  for(const p of pairs) {
+    assert.deepEqual(delta.candles[p],[]);
+    assert.equal(delta.prices[p],sharedPrice(secret,head,p));
+  }
+  assert.ok(delta.news.every(n=>n.step>=head-NEWS_SETTLE));
+});
+test('incremental news includes releases newly settled since cursor',()=>{
+  // Find an actual release right before the settlement boundary, so the
+  // result must be republished even without a new candle at its release tick.
+  const base=500000, releases=makeSharedMarket(secret,base,{history:600}).news;
+  const release=releases.find(n=>n.step>base-500&&n.step<base-NEWS_SETTLE);
+  assert.ok(release);
+  const since=release.step+NEWS_SETTLE-1, head=since+1;
+  const before=makeSharedMarket(secret,since).news.find(n=>n.step===release.step);
+  const after=makeSharedMarket(secret,head,{since}).news.find(n=>n.step===release.step);
+  assert.equal(before?.settled,false);
+  assert.equal(before?.reversed,null);
+  assert.equal(after?.settled,true);
+  assert.equal(typeof after?.reversed,'boolean');
+});
+test('160x6 performance comparison for full, one tick and same tick',()=>{
+  const head=1180000000, trials=3;
+  const measure=opts=>{
+    const start=performance.now();
+    for(let i=0;i<trials;i++) makeSharedMarket(secret,head,opts);
+    return (performance.now()-start)/trials;
+  };
+  const full=measure({}), delta=measure({since:head-1}), same=measure({since:head});
+  assert.ok(delta<full,`one-tick delta ${delta.toFixed(2)}ms vs full ${full.toFixed(2)}ms`);
+  assert.ok(same<full,`same-tick delta ${same.toFixed(2)}ms vs full ${full.toFixed(2)}ms`);
+  console.log(`shared market 160x6: full ${full.toFixed(2)}ms, +1 ${delta.toFixed(2)}ms, same ${same.toFixed(2)}ms`);
 });
 test('600x6 performance smoke',()=>{
   const start=performance.now(),view=makeSharedMarket(secret,1180000000,{history:600});

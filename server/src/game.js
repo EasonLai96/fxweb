@@ -225,10 +225,10 @@ export function resetGame(g, now = g.lastStepAt, marketSecret) {
 // ticks. accountValuation uses the SETTLED cursor, never the head quote.
 export function view(g, since, events = [], now = Date.now(), marketSecret) {
   const isShared = shared(g);
-  const m = isShared ? makeSharedMarket(marketSecret, absoluteTick(now)) : g.market;
-  const step = m.step, full = !(Number.isInteger(since) && since >= 0 && since <= step && step - since < m.history);
+  const m = isShared ? makeSharedMarket(marketSecret, absoluteTick(now), { since }) : g.market;
+  const step = m.step, full = !(Number.isSafeInteger(since) && since >= 0 && since <= step && step - since < m.history);
   const candles = {};
-  for (const p of pairs) candles[p] = full ? m.candles[p] : m.candles[p].filter(c => c.t > since);
+  for (const p of pairs) candles[p] = isShared || full ? m.candles[p] : m.candles[p].filter(c => c.t > since);
   const a = g.account, pending = remaining(g, now);
   const settledStep = cursor(g);
   const settledPrices = isShared ? (settledStep === step ? m.prices : tickPrices(marketSecret, settledStep)) : m.prices;
