@@ -4,6 +4,8 @@ const TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const MAX_FILE = 5 * 1024 * 1024;
 const MAX_PIXELS = 40_000_000;
 const SIZE = 256;
+// 沒有自訂頭像時，分享卡使用的預設頭像（同源靜態檔，不會污染 canvas）。
+export const DEFAULT_AVATAR_URL = new URL('./assets/default-avatar.webp', import.meta.url).href;
 const identityKey = (mode, username) => KEY + (mode === 'server' && username ? 'user:' + username.toLowerCase() : 'guest');
 
 export function getAvatar(mode, username) {

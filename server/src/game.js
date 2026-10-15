@@ -166,9 +166,13 @@ function advanceShared(g, now, marketSecret) {
 export function advance(g, now, marketSecret) {
   if (!Number.isFinite(now) || now < 0) throw new Error('Invalid game clock');
   ensureProgress(g, now);
-  if (shared(g)) return advanceShared(g, now, marketSecret);
-  ensureSecureGame(g);
-  return advanceLegacy(g, now);
+  // 借款利息按帳戶實際推進的 K 線根數累加（與帳戶結算同步）。無借款時為 no-op。
+  const before = cursor(g);
+  let result;
+  if (shared(g)) result = advanceShared(g, now, marketSecret);
+  else { ensureSecureGame(g); result = advanceLegacy(g, now); }
+  E.accrueLoan(g.account, cursor(g) - before);
+  return result;
 }
 
 export class GameError extends Error { constructor(msg) { super(msg); } }
@@ -211,6 +215,23 @@ export function closeOrder(g, id, now, marketSecret) {
   trimAccount(g.account);
   return r.pnl;
 }
+export function borrowLoan(g, amount, now) {
+  requireCaughtUp(g, now);
+  if (typeof amount !== 'number' || !Number.isFinite(amount)) throw new GameError('借款金額無效');
+  const r = E.borrow(g.account, amount, now);
+  if (!r.ok) throw new GameError(r.error);
+  trimAccount(g.account);
+  return r;
+}
+export function repayLoan(g, amount, now) {
+  requireCaughtUp(g, now);
+  if (typeof amount !== 'number' || !Number.isFinite(amount)) throw new GameError('還款金額無效');
+  const r = E.repay(g.account, amount, now);
+  if (!r.ok) throw new GameError(r.error);
+  trimAccount(g.account);
+  return r;
+}
+
 export function resetGame(g, now = g.lastStepAt, marketSecret) {
   resetProgress(g, now);
   E.resetAccount(g.account);
@@ -240,14 +261,15 @@ export function view(g, since, events = [], now = Date.now(), marketSecret) {
     switchStatus: isShared ? (g.seasonResetRequired ? 'reset_required' : 'ready') : 'close_legacy_positions',
     seasonResetRequired: !!g.seasonResetRequired,
     accountCursor: settledStep, accountSettledAt: isShared ? settledStep * TICK_MS : g.lastStepAt,
-    accountValuation: { step: settledStep, prices: { ...settledPrices }, ...E.metrics(a, settledPrices) },
+    accountValuation: { step: settledStep, prices: { ...settledPrices }, ...E.metrics(a, settledPrices), loanOwed: E.loanOwed(a), netWorth: E.netWorth(a, settledPrices) },
     headStep: step, headPrices,
     catchingUp: pending > 0, remainingTicks: pending, catchupBatchTicks: MAX_CATCHUP,
     nextTickIn: isShared ? Math.max(0, (step + 1) * TICK_MS - now) : Math.max(0, g.lastStepAt + TICK_MS - now),
     prices: headPrices, candles,
     news: isShared ? m.news.filter(n => n.step > newsFrom) : m.news.filter(n => n.step > newsFrom).map(n => publicNews(n, step)),
     account: { cash: a.cash, startingCash: a.startingCash, nextId: a.nextId,
-      positions: a.positions, log: a.log.filter(l => l.type === 'close').slice(-15), eq: a.eq },
+      positions: a.positions, log: a.log.filter(l => l.type === 'close').slice(-15), eq: a.eq,
+      loan: a.loan ? { ...a.loan } : null, loanOwed: E.loanOwed(a) },
     // Shared candles may already be at head while account events originate at
     // an older cursor. Do not hide newly settled expiry/liquidation by since.
     events: isShared ? events : events.filter(e => !Number.isInteger(since) || e.step > since),

@@ -3,7 +3,12 @@ import { DatabaseSync } from "node:sqlite";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 // 傳入 migrations 資料夾（依檔名順序全部執行）或單一 .sql 檔
-export function createD1(migrations) {
+// Windows 上 new URL(..).pathname 會變成 "/C:/..."，去掉開頭那條斜線才是合法路徑。
+function normalizePath(p) {
+  return typeof p === "string" && /^\/[A-Za-z]:[\\/]/.test(p) ? p.slice(1) : p;
+}
+export function createD1(migrationsPath) {
+  const migrations = normalizePath(migrationsPath);
   const db = new DatabaseSync(":memory:");
   db.exec("PRAGMA foreign_keys = ON;");
   const files = statSync(migrations).isDirectory() ? readdirSync(migrations).filter(f => f.endsWith(".sql")).sort().map(f => join(migrations, f)) : [migrations];

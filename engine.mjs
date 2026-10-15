@@ -9,6 +9,77 @@ export const WARN_LOSS = 0.60;   // 虧損達保證金 60% 警告
 export const LIQ_LOSS = 0.80;    // 虧損達保證金 80% 強制平倉
 const EPS = 1e-9;
 
+// ===== 周轉小金庫（銀行借款） =====
+// 參考 bilibili「FX 简单!」的 Emergency Fund：單筆上限 $200,000，日利率依借款金額分四級，
+// 有未償還借款時不能再借。本遊戲每 LOAN_DAY_TICKS 根 K 線（= 30 秒）計一天利息，
+// 利息以單利累加在原始本金上（不複利），不隨行情變動。借來的現金進入帳戶可動用餘額，
+// 但未償還的本金＋利息會從淨資產（排行榜成績）中扣除。
+export const LOAN_MAX = 200000;
+export const LOAN_DAY_TICKS = 20;        // 20 根 × 1.5 秒 = 30 秒算一天
+export const LOAN_TIERS = [
+  [10000, 0.0001],    // ≤ $10,000：日息 0.01%
+  [50000, 0.0002],    // ≤ $50,000：日息 0.02%
+  [100000, 0.0003],   // ≤ $100,000：日息 0.03%
+  [Infinity, 0.0004], // > $100,000：日息 0.04%
+];
+
+export function loanRate(amount) {
+  for (const [cap, rate] of LOAN_TIERS) if (amount <= cap) return rate;
+  return LOAN_TIERS.at(-1)[1];
+}
+
+const cents = n => Math.round(n * 100) / 100;
+
+// 目前欠款：本金 + 已累積利息。沒有借款時為 0。
+export function loanOwed(state) {
+  const l = state && state.loan;
+  return l ? cents(l.principal + l.accrued) : 0;
+}
+
+// 淨資產 = 帳戶權益 − 未償還借款。排行榜成績以此計算，借錢不會虛胖成績。
+export function netWorth(state, prices) {
+  return equity(state, prices) - loanOwed(state);
+}
+
+// 依經過的 K 線根數累加利息（單利，對本金計息）。無借款或根數 ≤ 0 時不做事，
+// 因此對沒借過款的帳戶完全無副作用。
+export function accrueLoan(state, ticks) {
+  const l = state && state.loan;
+  if (!l || !(ticks > 0)) return;
+  l.accrued = cents(l.accrued + l.principal * l.rateDaily / LOAN_DAY_TICKS * ticks);
+}
+
+export function borrow(state, amount, time) {
+  if (typeof amount !== "number" || !Number.isFinite(amount)) return { ok: false, error: "借款金額無效" };
+  amount = Math.floor(amount * 100) / 100;
+  if (amount < 1) return { ok: false, error: "借款金額至少 $1" };
+  if (amount > LOAN_MAX) return { ok: false, error: `單筆借款上限 ${LOAN_MAX.toLocaleString("en-US")}` };
+  if (loanOwed(state) > 0) return { ok: false, error: "尚有未償還借款，請先還清才能再借" };
+  state.loan = { principal: amount, accrued: 0, rateDaily: loanRate(amount), openedAt: time };
+  state.cash = cents(state.cash + amount);
+  state.log.push({ t: time, type: "borrow", amount, rateDaily: state.loan.rateDaily });
+  return { ok: true, amount, rateDaily: state.loan.rateDaily, owed: loanOwed(state) };
+}
+
+// 還款：金額可低於欠款（部分還款）。先償還利息再償還本金；還清後清除借款。
+export function repay(state, amount, time) {
+  const l = state && state.loan;
+  if (!l) return { ok: false, error: "目前沒有借款" };
+  const owed = loanOwed(state);
+  if (typeof amount !== "number" || !Number.isFinite(amount)) return { ok: false, error: "還款金額無效" };
+  amount = Math.min(cents(amount), owed);
+  if (amount < 0.01) return { ok: false, error: "還款金額至少 $0.01" };
+  if (state.cash + EPS < amount) return { ok: false, error: "可動用現金不足以還款" };
+  state.cash = cents(state.cash - amount);
+  let rest = amount;
+  const payInterest = Math.min(l.accrued, rest); l.accrued = cents(l.accrued - payInterest); rest = cents(rest - payInterest);
+  l.principal = cents(l.principal - rest);
+  const cleared = loanOwed(state) <= 0;
+  if (cleared) delete state.loan;
+  state.log.push({ t: time, type: "repay", amount, cleared });
+  return { ok: true, amount, cleared, owed: loanOwed(state) };
+}
+
 export function createAccount(startingCash = 10000) {
   return { cash: startingCash, positions: [], log: [], nextId: 1, startingCash };
 }
@@ -121,6 +192,7 @@ export function resetAccount(state) {
   state.positions = fresh.positions;
   state.log = fresh.log;
   state.nextId = fresh.nextId;
+  delete state.loan;   // 重置回到乾淨的 $10,000，清除所有未償還借款
 }
 
 // 強平價：虧損達保證金 80% 時的價格，k = LIQ_LOSS / leverage。

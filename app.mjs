@@ -110,7 +110,24 @@ function renderAccount(prices) {
   const bar = $("meterBar");
   bar.style.width = Math.min(100, usage * 100) + "%";
   bar.className = usage >= 0.8 ? "danger" : usage >= 0.5 ? "warn" : "";
+  const owed = E.loanOwed(state);
+  $("netWorthRow").classList.toggle("hidden", owed <= 0);
+  if (owed > 0) $("netWorth").textContent = money(m.equity - owed);
   return m;
+}
+
+/* ---------- 周轉小金庫顯示 ---------- */
+function renderBank() {
+  const owed = E.loanOwed(state);
+  const hasLoan = owed > 0;
+  $("loanOwed").textContent = money(owed);
+  $("loanOwedRow").classList.toggle("hidden", !hasLoan);
+  const l = state.loan;
+  $("loanRate").textContent = l ? (l.rateDaily * 100).toFixed(2) + "%／天" : "—";
+  const borrowBtn = $("loanBorrowBtn"), repayBtn = $("loanRepayBtn");
+  borrowBtn.disabled = hasLoan;
+  repayBtn.disabled = !hasLoan;
+  borrowBtn.textContent = hasLoan ? "已有借款" : "申請貸款";
 }
 
 /* ---------- 圖表 ---------- */
@@ -195,6 +212,40 @@ async function resetAll() {
   toast("帳戶已重置為 $10,000"); afterChange();
 }
 
+/* ---------- 周轉小金庫（銀行借款） ---------- */
+async function doBorrow() {
+  const amount = Number($("loanAmount").value);
+  if (!(amount >= 1)) { toast("借款金額至少 $1", true); return; }
+  if (amount > E.LOAN_MAX) { toast(`單筆借款上限 ${money(E.LOAN_MAX)}`, true); return; }
+  if (mode === "server") {
+    const r = await serverCall(() => Cloud.game.borrow(amount, market.step()));
+    const b = r && r.result && r.result.borrowed;
+    if (b) toast(`已借入 ${money(b.amount)}・日息 ${(b.rateDaily * 100).toFixed(2)}%`);
+    return;
+  }
+  const r = E.borrow(state, amount, Date.now());
+  if (!r.ok) { toast(r.error, true); return; }
+  toast(`已借入 ${money(r.amount)}・日息 ${(r.rateDaily * 100).toFixed(2)}%`);
+  afterChange();
+}
+
+async function doRepay() {
+  const owed = E.loanOwed(state);
+  if (!(owed > 0)) { toast("目前沒有借款", true); return; }
+  const field = Number($("loanAmount").value);
+  const amount = field >= 0.01 ? field : owed;   // 不填金額 = 全額還清
+  if (mode === "server") {
+    const r = await serverCall(() => Cloud.game.repay(amount, market.step()));
+    const p = r && r.result && r.result.repaid;
+    if (p) toast(p.cleared ? `已還清借款・還款 ${money(p.amount)}` : `已還款 ${money(p.amount)}・剩餘欠款 ${money(p.owed)}`);
+    return;
+  }
+  const r = E.repay(state, amount, Date.now());
+  if (!r.ok) { toast(r.error, true); return; }
+  toast(r.cleared ? `已還清借款・還款 ${money(r.amount)}` : `已還款 ${money(r.amount)}・剩餘欠款 ${money(r.owed)}`);
+  afterChange();
+}
+
 /* ---------- 持倉 ---------- */
 function renderPositions(prices) {
   const root = $("positions");
@@ -275,6 +326,7 @@ function renderAll() {
   renderPositions(mode === "server" && catchingUp && settledPrices ? settledPrices : prices);
   renderEquity();
   renderHistory();
+  renderBank();
 }
 
 function afterChange() { Store.save(state); equityPts.push(E.equity(state, market.prices())); renderAll(); }
@@ -290,6 +342,7 @@ function loop() {
   if (mode === "server") { poll(); return; }
   if (ui.paused) return;
   const { prices, news } = market.tick();
+  E.accrueLoan(state, 1);
   const events = E.settleTick(state, prices, Date.now());
   showEvents(events);
   if (news && news.step !== lastNewsStep) { lastNewsStep = news.step; showNews(news); }
@@ -316,6 +369,7 @@ function applyServer(v) {
   const a = v.account;
   state.cash = a.cash; state.startingCash = a.startingCash; state.nextId = a.nextId;
   state.positions = a.positions; state.log = a.log;
+  if (a.loan) state.loan = a.loan; else delete state.loan;
   equityPts.length = 0; equityPts.push(...(a.eq || []), E.equity(state, settledPrices || market.prices()));
   showEvents(v.events || []);
   const latest = fresh[fresh.length - 1];
@@ -400,6 +454,9 @@ function bind() {
   $("resetBtn").onclick = () => $("confirmModal").classList.remove("hidden");
   $("confirmCancel").onclick = () => $("confirmModal").classList.add("hidden");
   $("confirmOk").onclick = resetAll;
+  $("loanBorrowBtn").onclick = doBorrow;
+  $("loanRepayBtn").onclick = doRepay;
+  $("loanMaxBtn").onclick = () => { $("loanAmount").value = E.LOAN_MAX; };
   window.addEventListener("resize", renderAll);
 }
 

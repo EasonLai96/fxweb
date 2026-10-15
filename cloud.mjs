@@ -63,4 +63,6 @@ export const game = {
   open: (order, since) => api("POST", "/api/game/open", { ...order, since, requestId: crypto.randomUUID() }),
   close: (id, since) => api("POST", "/api/game/close", { id, since, requestId: crypto.randomUUID() }),
   reset: since => api("POST", "/api/game/reset", { since, requestId: crypto.randomUUID() }),
+  borrow: (amount, since) => api("POST", "/api/game/borrow", { amount, since, requestId: crypto.randomUUID() }),
+  repay: (amount, since) => api("POST", "/api/game/repay", { amount, since, requestId: crypto.randomUUID() }),
 };

@@ -39,6 +39,7 @@
       <div class="metric m-float"><span>浮動盈虧</span><strong id="floating">$0.00</strong></div>
       <div class="metric m-used"><span>已用保證金</span><strong id="usedMargin">$0.00</strong></div>
       <div class="metric m-usage"><span>保證金使用率</span><strong id="usage">0.0%</strong><div class="meter"><i id="meterBar"></i></div></div>
+      <div class="metric m-networth hidden" id="netWorthRow"><span>淨資產（扣負債）</span><strong id="netWorth">$0.00</strong></div>
     </section>
 
     <div class="workspace">
@@ -121,6 +122,23 @@
             <button id="shortBtn" type="button" class="trade-button short"><span>↘</span> 做空 / 賣出</button>
           </div>
           <p class="order-note">登入玩家看同一組虛構行情，下單、平倉、強平都由伺服器計算。登入新倉持有滿 7 天時按到期行情自動平倉；舊版個人行情持倉不適用新期限，須先結清才切換。槓桿越高，開倉手續費越高。行情跳空可能穿過強平線，帳戶淨值可能變成負數；淨值 ≤ 0 時會凍結開倉。</p>
+        </section>
+        <section class="panel bank-panel">
+          <div class="panel-heading"><div><span class="section-kicker">EMERGENCY FUND</span><h2>周轉小金庫 <span aria-hidden="true">♡</span></h2></div><span class="order-decoration" aria-hidden="true">✦</span></div>
+          <p class="bank-intro">最多借 $200,000。日利率按金額分級：≤$10,000 為 0.01%，≤$50,000 為 0.02%，≤$100,000 為 0.03%，以上為 0.04%。模擬數據每 30 秒計一天。</p>
+          <div class="bank-stats">
+            <div id="loanOwedRow" class="bank-stat hidden"><span>目前欠款</span><strong id="loanOwed">$0.00</strong></div>
+            <div class="bank-stat"><span>目前利率</span><strong id="loanRate">—</strong></div>
+          </div>
+          <div>
+            <label class="field-label" for="loanAmount">金額 <span>USD</span></label>
+            <div class="input-shell"><span>$</span><input id="loanAmount" type="number" min="1" step="100" placeholder="借款 / 還款金額" inputmode="decimal"><button id="loanMaxBtn" type="button">MAX</button></div>
+          </div>
+          <div class="bank-buttons">
+            <button id="loanBorrowBtn" type="button" class="bank-button borrow">申請貸款</button>
+            <button id="loanRepayBtn" type="button" class="bank-button repay" disabled>償還貸款</button>
+          </div>
+          <p class="order-note">借來的現金可立即交易，但未償還的本金＋利息會從淨資產與排行榜成績中扣除。有未償還借款時不能再借；還款時不填金額＝全額還清。重置帳戶會清除借款。</p>
         </section>
         <div class="side-disclaimer">這是遊戲，不提供真實交易。行情為虛構模擬，不是即時報價。介面參考 bilibili 小遊戲「FX 简单!」重新製作。</div>
       </aside>

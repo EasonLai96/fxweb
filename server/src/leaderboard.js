@@ -1,5 +1,5 @@
 // Part of games.state: update exclusively inside the player's versioned game CAS.
-import { equity } from '../../engine.mjs';
+import { equity, netWorth, loanOwed } from '../../engine.mjs';
 import { GameError, START_CASH } from './game.js';
 
 const NICKNAME_RE = /^[\p{L}\p{N}](?:[\p{L}\p{N} _-]*[\p{L}\p{N}])?$/u;
@@ -21,7 +21,7 @@ export function joinSeason(g, nickname, now) {
   const a = g.account;
   if (g.seasonResetRequired || !a || a.startingCash !== START_CASH || a.cash !== START_CASH ||
       !Array.isArray(a.positions) || a.positions.length !== 0 ||
-      !Array.isArray(a.log) || a.log.length !== 0 || a.nextId !== 1)
+      !Array.isArray(a.log) || a.log.length !== 0 || a.nextId !== 1 || loanOwed(a) > 0)
     throw new GameError('只能以全新回合參賽；請自願重置並清空帳戶後再加入');
   g.seasonParticipation = { season, status: 'active', nickname: name, score: 0, scoreUpdatedAt: now };
   return seasonParticipationView(g, now);
@@ -46,7 +46,8 @@ export function updateSeasonScore(g, prices, now) {
     if (typeof prices?.[pos.pair] !== 'number' || !Number.isFinite(prices[pos.pair]) || prices[pos.pair] <= 0)
       throw new GameError('無法計算參賽淨值');
   }
-  const score = equity(g.account, prices) / START_CASH - 1;
+  // 成績以淨資產（權益 − 未償還借款）計算，借錢不會虛胖排名報酬率。
+  const score = netWorth(g.account, prices) / START_CASH - 1;
   if (!Number.isFinite(score)) throw new GameError('無法計算參賽淨值');
   p.score = score;
   p.scoreUpdatedAt = now;

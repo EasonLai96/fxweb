@@ -1,5 +1,9 @@
 import { feeFor, LEVERAGES } from './engine.mjs';
-import { getAvatar, saveAvatar, removeAvatar, avatarImage } from './avatar.mjs';
+import { getAvatar, saveAvatar, removeAvatar, avatarImage, DEFAULT_AVATAR_URL } from './avatar.mjs';
+
+function defaultAvatarImg() {
+  const img = document.createElement('img'); img.alt = '預設分享頭像'; img.src = DEFAULT_AVATAR_URL; return img;
+}
 import { drawShareCard } from './share-card.mjs';
 import makeQR from './qr-code.mjs';
 
@@ -162,8 +166,8 @@ export function initExtras({ getContext, refresh, onToast = () => {} }) {
       const live = context();
       if (!removeAvatar(live.mode, live.username)) { onToast('無法存取本機頭像。', true); return; }
       generation++; releaseImage(); preview.replaceChildren(); output.replaceChildren();
-      avatarPreview.replaceChildren(el('span', '', 'FX'));
-      status.textContent = '已移除本機頭像，請重新產生圖片。';
+      avatarPreview.replaceChildren(defaultAvatarImg());
+      status.textContent = '已改回預設頭像，請重新產生圖片。';
       onToast('已移除本機頭像。');
     });
     const avatarInput = el('input', 'fx-avatar-input');
@@ -189,7 +193,7 @@ export function initExtras({ getContext, refresh, onToast = () => {} }) {
     avatarRow.append(avatarPreview, avatarDescription); body.append(avatarRow);
     const prior = getAvatar(c.mode, c.username);
     if (prior) { const img = el('img'); img.alt = '目前的分享頭像'; img.src = prior; avatarPreview.append(img); }
-    else avatarPreview.append(el('span', '', 'FX'));
+    else avatarPreview.append(defaultAvatarImg());
     const status = el('p', 'fx-extra-note', '準備產生快照。'); status.setAttribute('role', 'status');
     const preview = el('div', 'fx-extra-preview'); const output = el('div', 'fx-extra-actions');
     const generate = button('更新並產生 PNG', () => generateCard(check.checked, status, preview, output, generate), true);
@@ -215,7 +219,7 @@ export function initExtras({ getContext, refresh, onToast = () => {} }) {
     const stamp = new Date();
     const freshness = navigator.onLine === false ? '離線快照・未確認最新狀態' : c.catchingUp ? '伺服器補算中・未確認最新狀態' : c.mode === 'guest' ? '本機練習快照・非伺服器成績' : confirmed ? '已完成更新請求・僅代表產生時快照' : '更新未確認・使用目前已取得資料';
     try {
-      const avatar = await avatarImage(getAvatar(c.mode, c.username));
+      const avatar = await avatarImage(getAvatar(c.mode, c.username) || DEFAULT_AVATAR_URL);
       if (ticket !== generation || active !== 'share' || identity(context()) !== before) return;
       const canvas = await drawShareCard(c, { includeName, avatar, stamp, freshness, qr });
       const blob = await new Promise((resolve, reject) => canvas.toBlob(b => b ? resolve(b) : reject(new Error('PNG 產生失敗')), 'image/png'));

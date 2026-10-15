@@ -195,6 +195,24 @@ html[data-theme="night"] .primary-button{background:var(--accent);color:#0b2a1e}
 .order-note{margin:15px 2px 0;font-size:11px;line-height:1.6;color:var(--text-muted);font-weight:700}
 .side-disclaimer{font-size:11px;color:var(--text-dim);line-height:1.6;font-weight:700;padding:0 6px}
 
+.bank-panel{padding:22px}
+.bank-panel .panel-heading{padding:0;margin-bottom:14px}
+.bank-intro{margin:0 0 14px;font-size:11px;line-height:1.65;color:var(--text-muted);font-weight:700}
+.bank-stats{display:flex;flex-direction:column;gap:9px;background:var(--surface-tint);border:1px solid var(--border-soft);border-radius:11px;padding:12px 13px;margin-bottom:14px}
+.bank-stat{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--text-muted);font-weight:800}
+.bank-stat strong{font:800 15px "DM Mono",monospace;color:var(--text-deep)}
+#loanOwedRow strong{color:var(--down)}
+.bank-panel .field-label{display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);font-weight:800;margin-bottom:7px}
+.bank-panel .field-label span{color:var(--text-dim)}
+.bank-panel .input-shell{margin-bottom:12px}
+.bank-buttons{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.bank-button{border:0;border-radius:11px;padding:13px 6px;font-size:13px;font-weight:900;white-space:nowrap;transition:transform .15s,filter .15s}
+.bank-button:hover:not(:disabled){transform:translateY(-2px);filter:brightness(.98)}
+.bank-button:disabled{opacity:.5;cursor:not-allowed}
+.bank-button.borrow{background:var(--pink-soft);color:var(--red-deep)}
+.bank-button.repay{border:1px solid var(--border-strong);background:var(--surface);color:var(--green-text)}
+.metric.m-networth strong{color:var(--down)}
+
 .toast{position:fixed;left:50%;bottom:28px;transform:translate(-50%,30px);opacity:0;pointer-events:none;background:var(--brand-deep);color:var(--brand-leaf);padding:11px 18px;border-radius:12px;font-size:13px;font-weight:900;z-index:60;transition:all .25s;max-width:calc(100vw - 30px);text-align:center}
 .toast.show{opacity:1;transform:translate(-50%,0)}
 .toast.bad{background:var(--red-deep);color:#ffd9df}
