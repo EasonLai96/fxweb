@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>槓桿交易練習場</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+  <div class="brand">槓桿交易練習場 <span class="demo">練習・非真實行情</span></div>
+  <div class="hd-right">
+    <button id="colorToggle" class="ghost" title="切換漲跌顏色">紅漲綠跌</button>
+    <button id="menuBtn" class="ghost">選單</button>
+  </div>
+</header>
+
+<section id="account">
+  <div class="stat"><span>淨值</span><b id="equity">-</b></div>
+  <div class="stat"><span>現金</span><b id="cash">-</b></div>
+  <div class="stat"><span>已用保證金</span><b id="used">-</b></div>
+  <div class="stat"><span>可用</span><b id="free">-</b></div>
+  <div id="frozen" class="frozen hidden">帳戶已凍結（淨值 ≤ 0），請平倉或重置</div>
+</section>
+
+<section id="quotes"></section>
+
+<section id="order">
+  <h2>下單</h2>
+  <div class="row">
+    <label>貨幣對
+      <select id="pair"></select>
+    </label>
+    <label>名目(USD)
+      <input id="notional" type="number" value="10000" min="1" step="100" inputmode="numeric">
+    </label>
+  </div>
+  <div class="row">
+    <label>槓桿
+      <select id="lev"><option>1</option><option>2</option><option selected>5</option><option>10</option></select>
+    </label>
+    <div class="buy-sell">
+      <button id="long" class="long">做多</button>
+      <button id="short" class="short">做空</button>
+    </div>
+  </div>
+  <div id="orderMsg" class="msg"></div>
+</section>
+
+<section id="positions">
+  <h2>持倉</h2>
+  <table id="posTable"><thead><tr><th>貨幣對</th><th>方向</th><th>名目</th><th>槓桿</th><th>進場</th><th>現價</th><th>損益</th><th></th></tr></thead><tbody></tbody></table>
+  <p id="noPos" class="empty">目前沒有持倉</p>
+</section>
+
+<dialog id="menu">
+  <h3>選單</h3>
+  <p class="warn">本機存檔只存在這個瀏覽器，可被任意修改，<b>不是可信成績</b>。</p>
+  <button id="resetBtn" class="danger">重置帳戶</button>
+  <button id="exportBtn" class="ghost">匯出存檔 (JSON)</button>
+  <button id="pauseBtn" class="ghost">暫停/繼續</button>
+  <form method="dialog"><button class="ghost">關閉</button></form>
+  <textarea id="exportArea" class="hidden" readonly rows="8"></textarea>
+</dialog>
+
+<script type="module" src="app.mjs"></script>
+</body>
+</html>

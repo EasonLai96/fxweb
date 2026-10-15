@@ -1,0 +1,43 @@
+:root{
+  --bg:#0e1420; --panel:#17202e; --line:#243247; --tx:#e7edf5; --mut:#8aa0b8;
+  --up:#e5424a; --down:#17b36b; /* 預設紅漲綠跌 */
+  --accent:#3b82f6;
+}
+body.intl{ --up:#17b36b; --down:#e5424a; } /* 國際：綠漲紅跌 */
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,"PingFang TC","Noto Sans TC",sans-serif;background:var(--bg);color:var(--tx);padding-bottom:40px}
+header{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+.brand{font-weight:700}
+.demo{font-size:11px;color:var(--mut);background:#223049;padding:2px 6px;border-radius:6px;margin-left:6px}
+.hd-right{display:flex;gap:8px}
+button{font:inherit;border:none;border-radius:8px;padding:9px 12px;cursor:pointer;color:#fff}
+.ghost{background:#243247;color:var(--tx)}
+.danger{background:var(--up)}
+section{margin:12px 10px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}
+#account{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.stat{display:flex;justify-content:space-between;background:#101a28;padding:8px 10px;border-radius:8px}
+.stat span{color:var(--mut)}
+.frozen{grid-column:1/-1;color:#fff;background:var(--up);padding:8px;border-radius:8px;text-align:center}
+h2{font-size:14px;margin:0 0 10px;color:var(--mut)}
+.quote{display:flex;justify-content:space-between;align-items:center;padding:8px 6px;border-bottom:1px solid var(--line)}
+.quote:last-child{border-bottom:none}
+.price{font-variant-numeric:tabular-nums;font-size:18px;font-weight:700}
+.up{color:var(--up)} .down{color:var(--down)}
+.row{display:flex;gap:10px;margin-bottom:10px}
+label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--mut);flex:1}
+select,input,textarea{font:inherit;background:#101a28;color:var(--tx);border:1px solid var(--line);border-radius:8px;padding:9px}
+.buy-sell{display:flex;gap:8px;align-items:flex-end;flex:1}
+.buy-sell button{flex:1}
+.long{background:var(--up)} .short{background:var(--down)}
+.msg{font-size:13px;min-height:18px;color:var(--mut)}
+.msg.err{color:var(--up)}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:7px 4px;text-align:right;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+th:first-child,td:first-child{text-align:left}
+td button{background:#243247;padding:5px 9px;font-size:12px}
+.empty{color:var(--mut);font-size:13px;text-align:center;margin:6px 0 0}
+.hidden{display:none}
+dialog{background:var(--panel);color:var(--tx);border:1px solid var(--line);border-radius:14px;max-width:360px;width:90%}
+dialog h3{margin:0 0 10px}
+dialog button{width:100%;margin-bottom:8px}
+.warn{font-size:12px;color:var(--mut);background:#2a1f12;padding:8px;border-radius:8px}
