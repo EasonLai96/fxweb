@@ -21,6 +21,7 @@
     </div>
     <div class="top-actions">
       <span class="session-pill"><span class="live-dot"></span>模擬帳戶</span>
+      <button id="accountBtn" class="account-btn hidden" type="button"><span class="sync-dot" id="syncDot"></span><span id="accountLabel">登入</span></button>
       <button id="themeBtn" class="text-button" type="button">夜間</button>
       <button id="newsCenterBtn2" class="text-button" type="button">新聞</button>
       <button id="resetBtn" class="text-button" type="button">重新開始</button>
@@ -142,6 +143,51 @@
     <p>本次瀏覽收到的全部市場快訊。約四分之一的新聞，市場會走出相反方向。</p>
     <div id="newsCenterList" class="news-center-list"></div>
     <div class="modal-actions"><button id="newsCenterOk" class="primary-button" type="button">關閉</button></div>
+  </div>
+</div>
+
+<div id="authModal" class="modal-backdrop hidden" role="presentation">
+  <div class="modal auth-modal" role="dialog" aria-modal="true" aria-labelledby="authTitle">
+    <button id="authClose" class="modal-x" aria-label="關閉" type="button">×</button>
+    <div class="modal-icon">♡</div>
+    <div id="authForm">
+      <h2 id="authTitle">登入帳號</h2>
+      <p>登入後存檔會同步到雲端，換手機或瀏覽器也能接著玩。</p>
+      <div class="segmented auth-tabs" role="tablist">
+        <button id="tabLogin" type="button" class="active">登入</button>
+        <button id="tabRegister" type="button">註冊</button>
+      </div>
+      <form id="authFormEl" autocomplete="on" novalidate>
+        <label class="auth-field"><span>帳號</span><input id="authUser" name="username" autocomplete="username" autocapitalize="off" spellcheck="false" maxlength="20" placeholder="3~20 個英文字母、數字或底線"></label>
+        <label class="auth-field"><span>密碼</span><input id="authPass" name="password" type="password" autocomplete="current-password" maxlength="128" placeholder="至少 8 個字元"></label>
+        <label class="auth-field hidden" id="authPass2Wrap"><span>再輸入一次密碼</span><input id="authPass2" type="password" autocomplete="new-password" maxlength="128"></label>
+        <div id="authError" class="auth-error" role="alert"></div>
+        <button id="authSubmit" class="primary-button auth-submit" type="submit">登入</button>
+      </form>
+      <p class="auth-note">沒有「忘記密碼」功能，請記好密碼。存檔內容由瀏覽器產生，不是可信成績。</p>
+    </div>
+    <div id="authInfo" class="hidden">
+      <h2>已登入：<span id="authName"></span></h2>
+      <p id="authSyncText">存檔已同步到雲端。</p>
+      <div class="modal-actions auth-actions">
+        <button id="syncNowBtn" class="outline-button" type="button">立即同步</button>
+        <button id="logoutBtn" class="primary-button" type="button">登出</button>
+      </div>
+      <button id="deleteAccountBtn" class="text-button danger-link" type="button">刪除帳號與雲端存檔</button>
+    </div>
+  </div>
+</div>
+
+<div id="conflictModal" class="modal-backdrop hidden" role="presentation">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="conflictTitle">
+    <div class="modal-icon">⇅</div>
+    <h2 id="conflictTitle">要用哪一份存檔？</h2>
+    <p>這個帳號在雲端已經有存檔，和這台裝置上的進度不同。</p>
+    <div class="conflict-grid">
+      <button id="useCloudBtn" class="conflict-card" type="button"><b>雲端存檔</b><span id="cloudSummary"></span></button>
+      <button id="useLocalBtn" class="conflict-card" type="button"><b>這台裝置</b><span id="localSummary"></span></button>
+    </div>
+    <p class="auth-note">沒選到的那份會被覆蓋。</p>
   </div>
 </div>
 

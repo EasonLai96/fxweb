@@ -2,6 +2,7 @@ import * as E from "./engine.mjs";
 import { createMarket, PAIR_NAMES } from "./market.mjs";
 import * as Store from "./store.mjs";
 import { drawCandles, drawSpark, drawEquity } from "./charts.mjs";
+import * as Cloud from "./cloud.mjs";
 
 const THEME_KEY = "fxweb.theme";
 const market = createMarket(Date.now() & 0x7fffffff);
@@ -213,7 +214,7 @@ function renderAll() {
   renderHistory();
 }
 
-function afterChange() { Store.save(state); equityPts.push(E.equity(state, market.prices())); renderAll(); }
+function afterChange() { persist(true); equityPts.push(E.equity(state, market.prices())); renderAll(); }
 
 function loop() {
   if (ui.paused) return;
@@ -223,7 +224,7 @@ function loop() {
   if (news && news.step !== lastNewsStep) { lastNewsStep = news.step; showNews(news); }
   equityPts.push(E.equity(state, prices));
   if (equityPts.length > 500) equityPts.shift();
-  Store.save(state);
+  persist(events.length > 0);
   renderAll();
   if (!$("newsCenter").classList.contains("hidden")) renderNewsCenter();
 }
@@ -259,15 +260,174 @@ function bind() {
   $("resetBtn").onclick = () => $("confirmModal").classList.remove("hidden");
   $("confirmCancel").onclick = () => $("confirmModal").classList.add("hidden");
   $("confirmOk").onclick = () => {
-    E.resetAccount(state); Store.clear(); equityPts.length = 0;
+    E.resetAccount(state); Store.clear(); equityPts.length = 0; dirty = true;
     $("confirmModal").classList.add("hidden"); toast("帳戶已重置為 $10,000"); afterChange();
   };
   window.addEventListener("resize", renderAll);
 }
 
+/* ---------- 雲端同步 ---------- */
+// 本機每 tick 都存；雲端只在「有交易變動」後 4 秒存一次，加上每 60 秒保底，避免一直打 API。
+let dirty = false, syncTimer = 0, syncing = false, lastSyncAt = 0, syncError = "";
+const SYNC_DELAY = 4000, SYNC_INTERVAL = 60000;
+
+function persist(changed) {
+  Store.save(state);
+  if (changed) dirty = true;
+  if (!Cloud.user()) return;
+  if (changed) { clearTimeout(syncTimer); syncTimer = setTimeout(syncNow, SYNC_DELAY); }
+  else if (Date.now() - lastSyncAt > SYNC_INTERVAL) syncNow();
+}
+
+function setSyncUi(kind, text) {
+  $("syncDot").className = "sync-dot " + kind;
+  if (text != null) $("authSyncText").textContent = text;
+}
+
+function summary(d) {
+  const n = Store.normalize(d);
+  if (!n) return "（無法讀取）";
+  const last = n.log.length ? n.log[n.log.length - 1] : null;
+  const lastTxt = last && last.t ? new Date(last.t).toLocaleTimeString("zh-TW", { hour12: false }) : "—";
+  return `現金 ${money(n.cash)}\n持倉 ${n.positions.length} 筆・交易 ${n.log.length} 筆\n最後交易 ${lastTxt}`;
+}
+
+function adopt(data) {
+  const n = Store.normalize(data);
+  if (!n) return false;
+  n.positions = n.positions.filter(p => market.get(p.pair) != null);
+  Object.assign(state, n);
+  Store.save(state);
+  equityPts.length = 0; equityPts.push(E.equity(state, market.prices()));
+  renderAll();
+  return true;
+}
+
+async function syncNow({ force = false } = {}) {
+  if (!Cloud.user() || syncing) return;
+  if (!dirty && !force && Date.now() - lastSyncAt < SYNC_INTERVAL) return;
+  syncing = true; setSyncUi("busy", "同步中…");
+  try {
+    await Cloud.pushSave(Store.snapshot(state), { force });
+    dirty = false; lastSyncAt = Date.now(); syncError = "";
+    setSyncUi("ok", `已同步到雲端（${new Date().toLocaleTimeString("zh-TW", { hour12: false })}）`);
+  } catch (e) {
+    if (e.status === 409) { syncing = false; return resolveConflict(e.body.server); }
+    if (e.status === 401) { toast("登入已過期，請重新登入", true); renderAccountBtn(); }
+    syncError = e.message; lastSyncAt = Date.now();
+    setSyncUi("err", "同步失敗：" + e.message + "（進度仍保存在這台裝置）");
+  } finally { syncing = false; }
+}
+
+function resolveConflict(server) {
+  if (!server) { Cloud.setVersion(0); return syncNow(); }
+  return new Promise(resolve => {
+    $("cloudSummary").textContent = summary(server.data) + "\n上傳於 " + new Date(server.updatedAt).toLocaleTimeString("zh-TW", { hour12: false });
+    $("localSummary").textContent = summary(Store.snapshot(state)) + "\n目前畫面";
+    $("conflictModal").classList.remove("hidden");
+    const done = async useCloud => {
+      $("conflictModal").classList.add("hidden");
+      $("useCloudBtn").onclick = $("useLocalBtn").onclick = null;
+      if (useCloud) { adopt(server.data); Cloud.setVersion(server.version); dirty = false; lastSyncAt = Date.now(); setSyncUi("ok", "已改用雲端存檔"); toast("已載入雲端存檔"); }
+      else { await syncNow({ force: true }); toast("已用這台裝置的進度覆蓋雲端"); }
+      resolve();
+    };
+    $("useCloudBtn").onclick = () => done(true);
+    $("useLocalBtn").onclick = () => done(false);
+  });
+}
+
+// 登入後：雲端沒有存檔 -> 上傳本機；有存檔且本機是全新帳戶 -> 直接載入；兩邊都有進度 -> 讓玩家選。
+async function afterLogin() {
+  setSyncUi("busy", "讀取雲端存檔…");
+  try {
+    const server = await Cloud.fetchSave();
+    const local = Store.snapshot(state);
+    const localFresh = local.positions.length === 0 && local.log.length === 0 && local.cash === local.startingCash;
+    if (!server) { Cloud.setVersion(0); dirty = true; await syncNow(); }
+    else if (localFresh) { adopt(server.data); Cloud.setVersion(server.version); lastSyncAt = Date.now(); setSyncUi("ok", "已載入雲端存檔"); }
+    else if (JSON.stringify(server.data) === JSON.stringify(local)) { Cloud.setVersion(server.version); lastSyncAt = Date.now(); setSyncUi("ok", "存檔已是最新"); }
+    else await resolveConflict(server);
+  } catch (e) {
+    setSyncUi("err", "讀取雲端存檔失敗：" + e.message);
+  }
+  renderAccountBtn();
+}
+
+function renderAccountBtn() {
+  const btn = $("accountBtn");
+  btn.classList.toggle("hidden", !Cloud.enabled());
+  const u = Cloud.user();
+  $("accountLabel").textContent = u || "登入";
+  if (!u) $("syncDot").className = "sync-dot";
+}
+
+let authMode = "login";
+function setAuthMode(mode) {
+  authMode = mode;
+  $("tabLogin").classList.toggle("active", mode === "login");
+  $("tabRegister").classList.toggle("active", mode === "register");
+  $("authTitle").textContent = mode === "login" ? "登入帳號" : "建立新帳號";
+  $("authSubmit").textContent = mode === "login" ? "登入" : "註冊並登入";
+  $("authPass2Wrap").classList.toggle("hidden", mode !== "register");
+  $("authPass").autocomplete = mode === "login" ? "current-password" : "new-password";
+  $("authError").textContent = "";
+}
+
+function openAuth() {
+  const u = Cloud.user();
+  $("authForm").classList.toggle("hidden", !!u);
+  $("authInfo").classList.toggle("hidden", !u);
+  if (u) $("authName").textContent = u;
+  else { setAuthMode(authMode); $("authPass").value = ""; $("authPass2").value = ""; }
+  $("authModal").classList.remove("hidden");
+  if (!u) setTimeout(() => $("authUser").focus(), 50);
+}
+
+function bindAuth() {
+  $("accountBtn").onclick = openAuth;
+  $("authClose").onclick = () => $("authModal").classList.add("hidden");
+  $("tabLogin").onclick = () => setAuthMode("login");
+  $("tabRegister").onclick = () => setAuthMode("register");
+  $("authFormEl").onsubmit = async e => {
+    e.preventDefault();
+    const username = $("authUser").value.trim(), password = $("authPass").value;
+    const err = msg => { $("authError").textContent = msg; };
+    if (!/^[A-Za-z0-9_]{3,20}$/.test(username)) return err("帳號需為 3~20 個英文字母、數字或底線");
+    if (password.length < 8) return err("密碼至少 8 個字元");
+    if (authMode === "register" && password !== $("authPass2").value) return err("兩次輸入的密碼不一樣");
+    $("authSubmit").disabled = true; err("");
+    try {
+      if (authMode === "login") await Cloud.login(username, password); else await Cloud.register(username, password);
+      $("authModal").classList.add("hidden");
+      toast(authMode === "login" ? `歡迎回來，${Cloud.user()}` : `帳號 ${Cloud.user()} 建立完成`);
+      renderAccountBtn();
+      await afterLogin();
+    } catch (ex) { err(ex.message); }
+    finally { $("authSubmit").disabled = false; }
+  };
+  $("syncNowBtn").onclick = () => { dirty = true; syncNow(); };
+  $("logoutBtn").onclick = async () => {
+    await syncNow();
+    await Cloud.logout();
+    $("authModal").classList.add("hidden");
+    renderAccountBtn(); toast("已登出，進度仍保留在這台裝置");
+  };
+  $("deleteAccountBtn").onclick = async () => {
+    const pw = prompt("刪除後無法復原。請輸入密碼確認：");
+    if (!pw) return;
+    try { await Cloud.deleteAccount(pw); $("authModal").classList.add("hidden"); renderAccountBtn(); toast("帳號與雲端存檔已刪除"); }
+    catch (ex) { toast(ex.message, true); }
+  };
+  window.addEventListener("pagehide", () => { if (dirty && Cloud.user()) syncNow(); });
+}
+
 try { const t = localStorage.getItem(THEME_KEY); if (t === "night") { document.documentElement.dataset.theme = "night"; $("themeBtn").textContent = "白天"; } } catch {}
 $("marginInput").value = ui.margin;
 bind();
+bindAuth();
+renderAccountBtn();
+if (Cloud.user()) afterLogin();
 equityPts.push(E.equity(state, market.prices()));
 renderAll();
 setInterval(loop, 1500);

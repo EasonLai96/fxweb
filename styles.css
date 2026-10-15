@@ -333,3 +333,26 @@ html[data-theme="night"] .primary-button{background:var(--accent);color:#0b2a1e}
   .position-row .pos-cell:nth-of-type(3){display:none}
   .position-row{grid-template-columns:minmax(0,1fr) auto auto;align-items:center}
 }
+
+/* ===== 登入與同步 ===== */
+.account-btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border-strong);background:var(--surface);color:var(--green-text);border-radius:99px;padding:6px 11px;font-size:12px;font-weight:900;max-width:150px;white-space:nowrap}
+.account-btn #accountLabel{overflow:hidden;text-overflow:ellipsis}
+.sync-dot{width:7px;height:7px;border-radius:50%;background:var(--text-dim);flex:none}
+.sync-dot.ok{background:var(--accent-deep)} .sync-dot.busy{background:#e9a35a;animation:pulse 1.2s infinite} .sync-dot.err{background:var(--down)}
+.auth-modal{text-align:center}
+.auth-tabs{width:100%;margin:4px 0 14px}.auth-tabs button{flex:1}
+.auth-field{display:flex;flex-direction:column;gap:5px;text-align:left;margin-bottom:11px;font-size:12px;font-weight:900;color:var(--text-deep)}
+.auth-field input{border:1px solid var(--border-strong);border-radius:11px;height:44px;padding:0 12px;background:var(--surface);color:var(--text-deep);font:700 15px Nunito,sans-serif;outline:0}
+.auth-field input:focus{border-color:var(--accent-hover);box-shadow:0 0 0 3px var(--focus-ring)}
+.auth-error{min-height:18px;color:var(--down);font-size:12px;font-weight:800;text-align:left;margin:2px 0 8px}
+.auth-submit{width:100%;padding:13px}
+.auth-note{font-size:11px!important;margin-top:12px!important;color:var(--text-dim)!important}
+.auth-actions{margin-top:6px}
+.danger-link{color:var(--red-text);font-size:12px;margin-top:14px}
+.conflict-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.conflict-card{border:1px solid var(--border-strong);background:var(--surface-tint);border-radius:13px;padding:14px 10px;display:flex;flex-direction:column;gap:6px;color:var(--text-deep)}
+.conflict-card:hover{border-color:var(--accent-hover)}
+.conflict-card b{font-size:14px}
+.conflict-card span{font:700 12px/1.5 "DM Mono",monospace;color:var(--text-muted);white-space:pre-line}
+@media(max-width:720px){.account-btn{padding:5px 9px;font-size:11px;max-width:96px}.top-actions{gap:8px}}
+@media(max-width:380px){#newsCenterBtn2{display:none}}

@@ -1,0 +1,13 @@
+name = "fxweb-api"
+main = "src/index.js"
+compatibility_date = "2024-09-23"
+
+[vars]
+# 允許呼叫 API 的前端網址（逗號分隔）
+ALLOWED_ORIGINS = "https://easonlai96.github.io"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "fxweb"
+database_id = "141a8848-44c3-4331-973c-efc1c83ffc8d"
+migrations_dir = "migrations"
