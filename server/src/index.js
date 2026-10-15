@@ -253,7 +253,8 @@ async function newRecovery(req, env) {
 function sharedSecret(env) {
   // Production must never fall back to a per-user private market.
   // Test fixtures explicitly pass MARKET_TEST_ALLOW_LEGACY=true.
-  if (!env.SHARED_MARKET_SECRET && env.MARKET_TEST_ALLOW_LEGACY !== true) throw new Error("Shared market secret is not configured");
+  if ((!env.SHARED_MARKET_SECRET || !/^[0-9a-f]{64}$/.test(env.SHARED_MARKET_SECRET)) && env.MARKET_TEST_ALLOW_LEGACY !== true)
+    throw new Error("Shared market secret is not configured");
   return env.SHARED_MARKET_SECRET;
 }
 function serverPrices(g, secret) {

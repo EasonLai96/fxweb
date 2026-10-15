@@ -51,7 +51,8 @@ export function initLeaderboard({request,onToast=()=>{},getContext}={}){
     if(!me)return el('p','fx-leader-callout',loading?'正在讀取你的參賽設定…':'尚未確認參賽設定，請重新整理。');
     const section=el('section','fx-leader-participant');section.append(el('h3','','我的參賽設定'));
     if(me.optIn){section.append(el('p','',`已加入：${me.nickname||'未提供暱稱'}（不顯示登入帳號）`));const leave=btn('退出排行',()=>mutate('leave'),'fx-leader-danger');leave.disabled=saving||loading;section.append(leave)}
-    else{section.append(el('p','','預設不參賽。公開列表只顯示自選暱稱與統計數字。'));
+    else if(me.status==='withdrawn'){section.append(el('p','','本季已退出或已重置，不能再次加入；下一季可重新報名。'));}
+    else{section.append(el('p','','預設不參賽。加入前須自願重置為全新 $10,000 回合，清除現有持倉與交易紀錄。公開列表只顯示自選暱稱與統計數字。'));
       const form=el('form','fx-leader-join'),label=el('label','','公開暱稱（1–16 字）'),input=el('input'),submit=btn('自願加入',()=>{},'fx-leader-primary');
       input.id='fx-leader-nickname';input.name='nickname';input.autocomplete='off';input.maxLength=32;input.placeholder='請輸入自選暱稱';label.htmlFor=input.id;submit.type='submit';submit.disabled=saving||loading;
       input.addEventListener('input',()=>input.setCustomValidity(''));
