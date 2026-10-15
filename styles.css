@@ -33,7 +33,7 @@ html[data-theme="night"]{
 }
 
 *{box-sizing:border-box}
-html,body{margin:0;background:var(--bg);color:var(--text)}
+html,body{margin:0;background:var(--bg);color:var(--text);overflow-x:hidden}
 body{font-family:Nunito,"PingFang TC","Microsoft JhengHei","Noto Sans TC",sans-serif;-webkit-font-smoothing:antialiased}
 button,input,select{font:inherit;color:inherit}
 button{cursor:pointer}
@@ -197,7 +197,8 @@ html[data-theme="night"] .primary-button{background:var(--accent);color:#0b2a1e}
 .toast.show{opacity:1;transform:translate(-50%,0)}
 .toast.bad{background:var(--red-deep);color:#ffd9df}
 .news-float{position:fixed;right:16px;top:92px;width:min(320px,calc(100vw - 24px));z-index:50;background:var(--surface);border:1px solid var(--border-strong);border-radius:14px;box-shadow:var(--shadow-modal);padding:13px 15px;transform:translateX(calc(100% + 30px));transition:transform .35s ease}
-.news-float.show{transform:none}
+.news-float{opacity:0;visibility:hidden;transform:translateY(-8px)!important;transition:opacity .25s,transform .25s,visibility .25s}
+.news-float.show{opacity:1;visibility:visible;transform:none!important}
 .nf-close{position:absolute;right:8px;top:5px;border:0;background:none;font-size:19px;color:var(--text-muted);padding:2px 6px}
 .nf-tag{display:inline-block;background:var(--tint-green);color:var(--accent-deep);border-radius:6px;padding:3px 7px;font-size:10px;font-weight:900;margin-bottom:6px}
 .nf-tag.bear{background:var(--tint-red);color:var(--red-text)}
@@ -219,25 +220,116 @@ html[data-theme="night"] .primary-button{background:var(--accent);color:#0b2a1e}
 
 @media(max-width:1250px){.workspace{grid-template-columns:200px minmax(0,1fr) 280px;gap:14px}.balance-strip{padding:23px;gap:12px;grid-template-columns:minmax(220px,1.3fr) repeat(4,minmax(105px,.6fr))}.metric{padding-left:12px}.metric strong{font-size:15px}.order-panel{padding:20px}.chart-panel{padding:22px}.position-row{grid-template-columns:1.2fr 1fr 1fr 1fr auto}.pos-entry{display:none}}
 @media(max-width:1010px){.workspace{grid-template-columns:190px minmax(0,1fr)}.right-column{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr}.order-panel,.market-panel{position:static}.balance-strip{grid-template-columns:repeat(4,1fr)}.balance-lead{grid-column:1/-1}.metric{border-left:0;border-top:1px solid var(--border-green-metric);padding:14px 0 0;min-height:0}}
+
+/* ===== 手機版（參考原版 v3.0.2 的手機排版：圖表 → 下單 → 持倉，緊湊間距） ===== */
 @media(max-width:720px){
-  .topbar{height:64px;padding:0 15px}.brand strong{font-size:17px}.brand small{font-size:9px}.brand-mark{width:34px;height:34px;border-radius:12px}.brand-mark svg{width:24px;height:24px}
-  .top-actions{gap:12px}.session-pill{display:none}.text-button{font-size:12px}
-  .main{padding:15px 12px 40px}
-  .balance-strip{padding:19px;gap:0 15px;margin-bottom:13px;border-radius:16px;grid-template-columns:repeat(2,1fr);min-height:0}
-  .balance-lead{margin-bottom:12px}.money-large{font-size:30px}.metric{padding:11px 0}.metric strong{font-size:15px}
-  .workspace{display:flex;flex-direction:column;gap:13px}
-  .market-panel{width:100%;padding:15px 12px;position:static}.market-panel .panel-heading{margin-bottom:8px}
-  .pair-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px}
-  .pair-row{padding:9px 8px;display:block}.pair-row strong{font-size:12px}.pair-row small{font-size:10px}
-  .pair-numbers{text-align:left;margin-top:6px}.pair-numbers strong{font-size:11px}.pair-row canvas{height:22px}
-  .market-note{display:none}
-  .center-column,.right-column{width:100%;gap:13px;display:flex;flex-direction:column}
-  .chart-panel{padding:18px 14px 14px}.chart-wrap{height:300px}.pair-title h1{font-size:21px}.quote-block strong{font-size:21px}
-  .chart-controls{margin:16px 0 11px}.segmented button{padding:7px 9px}
-  .order-panel{padding:20px;position:static}
-  .position-row{grid-template-columns:1fr 1fr auto;gap:8px}.pos-entry,.pos-liq{display:none}
-  .positions-panel,.history-panel,.equity-panel{padding:18px 13px}
-  .chart-foot{font-size:10px}
-  .news-float{top:74px;right:12px}
+  .topbar{height:52px;padding:0 10px}
+  .brand{gap:8px}.brand-mark{width:32px;height:32px;border-radius:11px}.brand-mark svg{width:22px;height:22px}
+  .brand strong{font-size:16px}.brand small{display:none}
+  .top-actions{gap:10px}.text-button{font-size:12px;padding:6px 2px}
+  .main{padding:6px 7px 28px}
+
+  /* 帳戶：一行顯示權益 + 可用 + 浮動 */
+  .balance-strip{grid-template-columns:minmax(0,1.3fr) minmax(0,.85fr) minmax(0,.85fr);min-height:0;padding:9px 11px;gap:8px;margin-bottom:6px;border-radius:14px}
+  .balance-strip:after,.balance-lead p,.balance-lead .eyebrow{display:none}
+  .balance-lead{grid-column:auto;margin:0;min-width:0}
+  .balance-title{font-size:10px;margin:0;color:var(--text-muted)}
+  .money-large{font-size:19px;margin-top:2px;white-space:nowrap}
+  .metric{border-left:1px solid var(--border-green-metric);border-top:0;padding:0 0 0 9px;min-height:0;gap:3px}
+  .metric span{font-size:10px}.metric strong{font-size:13px}
+  .m-used,.m-usage{display:none!important}
+
+  .workspace{display:flex;flex-direction:column;gap:6px}
+  .center-column,.right-column{display:contents}
+
+  /* 貨幣對：橫向滑動的小卡 */
+  .market-panel{order:0;padding:7px;border-radius:14px;position:static}
+  .market-panel .panel-heading,.market-note{display:none}
+  .pair-list{display:flex;flex-direction:row;gap:6px;overflow-x:auto;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .pair-list::-webkit-scrollbar{display:none}
+  .pair-row{flex:0 0 31%;min-width:108px;scroll-snap-align:start;display:block;padding:7px 8px;border:1px solid var(--border-soft);border-radius:11px}
+  .pair-row.selected{box-shadow:none;border-color:var(--accent-hover)}
+  .pair-row strong{font-size:12px}.pair-row small{display:none}
+  .pair-numbers{text-align:left;margin-top:3px;display:flex;justify-content:space-between;gap:4px}
+  .pair-numbers strong{font-size:11px}.pair-numbers small{display:inline!important;font-size:10px;margin:0}
+  .pair-row canvas{height:22px;margin-top:3px}
+
+  .chart-panel{order:1;padding:10px 10px 8px;border-radius:14px}
+  .chart-topline{align-items:center}
+  .chart-topline .section-kicker,.pair-sub{display:none}
+  .pair-title{margin:0}.pair-title h1{font-size:18px}.mode-badge{font-size:9px;padding:3px 7px}
+  .quote-block{padding:0}.quote-block strong{font-size:19px}.quote-block span{font-size:11px}
+  .chart-controls{margin:8px 0 6px;display:grid;grid-template-columns:1fr auto;gap:6px}
+  .segmented{width:100%;padding:3px}.segmented button{flex:1;padding:6px 4px;font-size:11px}
+  .playback-controls{gap:5px;font-size:10px}#dataStatus{display:none}
+  .playback-controls .outline-button{padding:6px 9px;font-size:11px}
+  .chart-wrap{height:clamp(200px,32dvh,270px);border-radius:11px}
+  .news-ticker{margin-top:7px;padding:6px 9px;font-size:11px}
+  .chart-foot{display:none}
+
+  /* 下單：緊貼圖表下方 */
+  .order-panel{order:2;padding:10px;border-radius:14px;position:static}
+  .order-panel .panel-heading,.order-pair,.order-note{display:none}
+  .compact-fields{display:grid;grid-template-columns:minmax(0,.95fr) minmax(0,1.05fr);gap:10px;align-items:end}
+  .field-label,.range-label{font-size:11px;margin:0 0 5px}
+  .range-label strong{font-size:14px}
+  .input-shell{height:38px;padding:0 8px}.input-shell input{font-size:14px}
+  .order-panel input[type=range]{margin:8px 0 2px}
+  .range-ticks{font-size:9px}
+  .order-preview{margin-top:8px;padding:7px 8px;display:grid;grid-template-columns:repeat(2,1fr);gap:6px 10px}
+  .order-preview div{display:flex;font-size:10px}
+  .order-preview strong{font-size:10px}
+  .trade-buttons{margin-top:8px;gap:7px}
+  .trade-button{padding:11px 4px;font-size:13px}
+
+  .positions-panel{order:3;padding:10px;border-radius:14px}
+  .positions-panel .panel-heading,.equity-panel .panel-heading,.history-panel .panel-heading{margin:0 0 6px;padding:0 2px}
+  .positions-panel .section-kicker,.equity-panel .section-kicker,.history-panel .section-kicker{display:none}
+  .panel-heading h2{font-size:14px;margin:0}
+  .count-pill{min-width:19px;height:19px;font-size:11px}
+  .quiet-note{font-size:10px}
+  .positions-list{gap:5px;max-height:220px;overflow:auto}
+  .position-row{padding:8px 9px;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr) auto;gap:6px}
+  .pos-entry,.pos-liq,.position-row .pos-cell:nth-of-type(2){display:none}
+  .pos-name strong{font-size:12px}.pos-name small,.pos-cell small{font-size:9px;margin-top:2px}
+  .pos-cell strong{font-size:11px}
+  .direction,.risk-tag{font-size:9px}
+  .close-btn{padding:7px 10px;font-size:11px}
+  .empty-state{padding:10px;font-size:11px}.empty-icon{display:none}
+
+  .equity-panel{order:4;padding:10px;border-radius:14px}
+  .equity-wrap{height:110px;border-radius:10px}
+  .history-panel{order:5;padding:10px;border-radius:14px}
+  .side-disclaimer{order:6;font-size:10px;padding:2px 6px}
+
+  .news-float{top:60px;right:8px;padding:10px 12px}
+  .toast{bottom:18px}
 }
-@media(max-width:390px){.pair-list{grid-template-columns:repeat(2,minmax(0,1fr))}.chart-wrap{height:250px}.quote-block strong{font-size:19px}.trade-button{font-size:12px}.legend-keys{display:none}}
+@media(max-width:380px){
+  .balance-strip{grid-template-columns:minmax(0,1.4fr) minmax(0,1fr)}
+  .m-free{display:none!important}
+  .money-large{font-size:17px}
+  .text-button{font-size:11px}
+  .pair-row{min-width:100px}
+}
+@media(max-width:720px){
+  .session-pill{display:none}
+  .top-actions .text-button{white-space:nowrap}
+  .pair-row{flex:0 0 112px;width:112px;min-width:0;overflow:hidden}
+  .pair-row canvas{width:100%;max-width:100%}
+  .order-preview div:last-child{grid-column:1/-1}
+  .order-preview strong{white-space:nowrap}
+}
+@media(max-width:720px){
+  .workspace{align-items:stretch}
+  .workspace .panel,.side-disclaimer{width:100%;min-width:0;max-width:100%}
+  .news-ticker{min-width:0;max-width:100%}
+  .ticker-body{contain:inline-size}
+  .positions-list{width:100%}
+  .position-row{grid-template-columns:minmax(0,1fr) auto auto}
+  .pos-name small{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+}
+@media(max-width:720px){
+  .position-row .pos-cell:nth-of-type(3){display:none}
+  .position-row{grid-template-columns:minmax(0,1fr) auto auto;align-items:center}
+}

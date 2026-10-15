@@ -141,7 +141,7 @@ export function drawEquity(canvas, points, startValue, { up, down, muted, text }
     ctx.fillStyle = muted; ctx.font = "bold 12px sans-serif"; ctx.textAlign = "center";
     ctx.fillText("交易一段時間後會出現淨值曲線", w / 2, h / 2 + 4); ctx.textAlign = "left"; return;
   }
-  const padL = 12, padR = 70, padT = 14, padB = 14;
+  const padL = 10, padR = 58, padT = 16, padB = 16;
   let hi = Math.max(startValue, ...points), lo = Math.min(startValue, ...points);
   const pad = Math.max((hi - lo) * 0.15, startValue * 0.002); hi += pad; lo -= pad;
   const yOf = v => padT + (hi - v) / (hi - lo) * (h - padT - padB);
@@ -151,7 +151,11 @@ export function drawEquity(canvas, points, startValue, { up, down, muted, text }
   ctx.strokeStyle = muted; ctx.globalAlpha = 0.6; ctx.setLineDash([3, 4]); ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(padL, yOf(startValue)); ctx.lineTo(w - padR, yOf(startValue)); ctx.stroke();
   ctx.setLineDash([]); ctx.globalAlpha = 1;
-  ctx.fillStyle = muted; ctx.font = "10px 'DM Mono', monospace"; ctx.fillText("起始 " + Math.round(startValue).toLocaleString("en-US"), w - padR + 6, yOf(startValue) + 3);
+  // 起始標籤放左側，避免和右側目前淨值標籤重疊
+  const sy = yOf(startValue), ly0 = yOf(points[points.length - 1]);
+  const above = ly0 > sy - 4;   // 目前淨值在起始線下方或接近時，起始標籤放線上方
+  ctx.fillStyle = muted; ctx.font = "10px 'DM Mono', monospace";
+  ctx.fillText("起始 " + Math.round(startValue).toLocaleString("en-US"), padL + 2, above ? sy - 5 : sy + 13);
 
   ctx.beginPath(); points.forEach((v, i) => i ? ctx.lineTo(xOf(i), yOf(v)) : ctx.moveTo(xOf(i), yOf(v)));
   ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineJoin = "round"; ctx.stroke();
