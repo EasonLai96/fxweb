@@ -31,9 +31,9 @@
   <main class="main">
     <section class="balance-strip" aria-label="帳戶概覽">
       <div class="balance-lead">
-        <div class="eyebrow">我的交易小帳本 <span class="account-mode-chip">模擬帳戶</span></div>
+        <div class="eyebrow">我的交易小帳本 <span class="account-mode-chip" id="accountModeChip">訪客模式・不計成績</span></div>
         <div class="balance-title">帳戶總權益 <span id="equity" class="money-large">$10,000.00</span></div>
-        <p>報酬率 <b id="retPct">+0.00%</b>　本機存檔，不是可信成績。</p>
+        <p>報酬率 <b id="retPct">+0.00%</b><span id="guestNote">　訪客進度只存在這台裝置。<button type="button" class="inline-link" id="guestLoginLink">登入</button>後由伺服器計算，成績才算數。</span></p>
       </div>
       <div class="metric m-free"><span>可用餘額</span><strong id="free">$0.00</strong></div>
       <div class="metric m-float"><span>浮動盈虧</span><strong id="floating">$0.00</strong></div>
@@ -53,7 +53,7 @@
           <div class="chart-topline">
             <div>
               <span class="section-kicker">PRICE CHART</span>
-              <div class="pair-title"><h1 id="pairTitle">EUR / USD</h1><span class="mode-badge">模擬行情</span></div>
+              <div class="pair-title"><h1 id="pairTitle">EUR / USD</h1><span class="mode-badge guest" id="modeBadge">訪客・本機練習</span></div>
               <div class="pair-sub" id="pairName">歐元 / 美元</div>
             </div>
             <div class="quote-block"><strong id="currentPrice">-</strong><span id="priceChange">+0.00%</span></div>
@@ -119,7 +119,7 @@
             <button id="longBtn" type="button" class="trade-button long"><span>↗</span> 做多 / 買入</button>
             <button id="shortBtn" type="button" class="trade-button short"><span>↘</span> 做空 / 賣出</button>
           </div>
-          <p class="order-note">槓桿越高，開倉手續費越高。行情跳空可能穿過強平線，帳戶淨值可能變成負數；淨值 ≤ 0 時會凍結開倉。</p>
+          <p class="order-note">登入後下單、平倉、強平都由伺服器以伺服器價格計算。槓桿越高，開倉手續費越高。行情跳空可能穿過強平線，帳戶淨值可能變成負數；淨值 ≤ 0 時會凍結開倉。</p>
         </section>
         <div class="side-disclaimer">這是遊戲，不提供真實交易。行情為虛構模擬，不是即時報價。介面參考 bilibili 小遊戲「FX 简单!」重新製作。</div>
       </aside>
@@ -152,25 +152,27 @@
     <div class="modal-icon">♡</div>
     <div id="authForm">
       <h2 id="authTitle">登入帳號</h2>
-      <p>登入後存檔會同步到雲端，換手機或瀏覽器也能接著玩。</p>
+      <p id="authDesc">登入後由伺服器計算行情與帳戶，成績才算數。</p>
       <div class="segmented auth-tabs" role="tablist">
         <button id="tabLogin" type="button" class="active">登入</button>
         <button id="tabRegister" type="button">註冊</button>
       </div>
       <form id="authFormEl" autocomplete="on" novalidate>
         <label class="auth-field"><span>帳號</span><input id="authUser" name="username" autocomplete="username" autocapitalize="off" spellcheck="false" maxlength="20" placeholder="3~20 個英文字母、數字或底線"></label>
-        <label class="auth-field"><span>密碼</span><input id="authPass" name="password" type="password" autocomplete="current-password" maxlength="128" placeholder="至少 8 個字元"></label>
-        <label class="auth-field hidden" id="authPass2Wrap"><span>再輸入一次密碼</span><input id="authPass2" type="password" autocomplete="new-password" maxlength="128"></label>
+        <label class="auth-field hidden" id="authCodeWrap"><span>救援碼</span><input id="authCode" autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="24" placeholder="XXXX-XXXX-XXXX-XXXX" class="mono-input"></label>
+        <label class="auth-field"><span id="authPassLabel">密碼</span><input id="authPass" name="password" type="password" autocomplete="current-password" maxlength="128" placeholder="至少 8 個字元"></label>
+        <label class="auth-field hidden" id="authPass2Wrap"><span>再輸入一次</span><input id="authPass2" type="password" autocomplete="new-password" maxlength="128"></label>
         <div id="authError" class="auth-error" role="alert"></div>
         <button id="authSubmit" class="primary-button auth-submit" type="submit">登入</button>
       </form>
-      <p class="auth-note">沒有「忘記密碼」功能，請記好密碼。存檔內容由瀏覽器產生，不是可信成績。</p>
+      <div class="auth-links"><button id="forgotLink" class="text-button" type="button">忘記密碼？</button><button id="backToLogin" class="text-button hidden" type="button">← 回到登入</button></div>
     </div>
     <div id="authInfo" class="hidden">
       <h2>已登入：<span id="authName"></span></h2>
-      <p id="authSyncText">存檔已同步到雲端。</p>
+      <p id="authSyncText">行情與帳戶由伺服器計算。</p>
+      <p class="auth-note">舊版雲端存檔保留但不匯入新帳戶；新版從 $10,000 開始。舊帳號請先產生並保存救援碼。</p>
       <div class="modal-actions auth-actions">
-        <button id="syncNowBtn" class="outline-button" type="button">立即同步</button>
+        <button id="newCodeBtn" class="outline-button" type="button">產生新救援碼</button>
         <button id="logoutBtn" class="primary-button" type="button">登出</button>
       </div>
       <button id="deleteAccountBtn" class="text-button danger-link" type="button">刪除帳號與雲端存檔</button>
@@ -178,16 +180,14 @@
   </div>
 </div>
 
-<div id="conflictModal" class="modal-backdrop hidden" role="presentation">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="conflictTitle">
-    <div class="modal-icon">⇅</div>
-    <h2 id="conflictTitle">要用哪一份存檔？</h2>
-    <p>這個帳號在雲端已經有存檔，和這台裝置上的進度不同。</p>
-    <div class="conflict-grid">
-      <button id="useCloudBtn" class="conflict-card" type="button"><b>雲端存檔</b><span id="cloudSummary"></span></button>
-      <button id="useLocalBtn" class="conflict-card" type="button"><b>這台裝置</b><span id="localSummary"></span></button>
-    </div>
-    <p class="auth-note">沒選到的那份會被覆蓋。</p>
+<div id="rcModal" class="modal-backdrop hidden" role="presentation">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="rcTitle">
+    <div class="modal-icon" aria-hidden="true">#</div>
+    <h2 id="rcTitle">請記下救援碼</h2>
+    <p>忘記密碼時，用這組碼重設。<b>它只會顯示這一次</b>，伺服器也查不到原文。請截圖或抄在安全的地方，不要給別人。</p>
+    <div class="rc-box"><code id="rcCode"></code><button id="rcCopy" class="outline-button" type="button">複製</button></div>
+    <label class="rc-ack"><input type="checkbox" id="rcAck"> 我已經記下來了</label>
+    <div class="modal-actions"><button id="rcDone" class="primary-button" type="button" disabled>完成</button></div>
   </div>
 </div>
 
@@ -195,7 +195,7 @@
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
     <div class="modal-icon">♡</div>
     <h2 id="confirmTitle">重新開始？</h2>
-    <p>帳戶會回到 $10,000，所有持倉與紀錄都會清除。</p>
+    <p>帳戶會回到 $10,000，所有持倉會直接結束。已登入時行情不會重新開始，伺服器會記錄重置次數。</p>
     <div class="modal-actions"><button id="confirmCancel" class="outline-button" type="button">取消</button><button id="confirmOk" class="primary-button" type="button">重新開始</button></div>
   </div>
 </div>

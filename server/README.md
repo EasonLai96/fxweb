@@ -1,40 +1,48 @@
 # fxweb-api
 
-槓桿交易練習場的後端：Cloudflare Workers + D1。帳號密碼登入、雲端存檔。
+Cloudflare Workers + D1：帳號、救援碼重設密碼、伺服器端交易。
 
 ## API
 
-| 方法 | 路徑 | 說明 |
+Authorization: Bearer token；session有效30天。
+
+| 方法 | 路徑 | 用途 |
 |---|---|---|
-| POST | /api/register | `{username, password}` → `{token, user}` |
-| POST | /api/login | `{username, password}` → `{token, user}` |
-| POST | /api/logout | 需登入，作廢目前 token |
-| GET | /api/me | 需登入 |
-| GET | /api/save | 需登入，回傳 `{save: {data, version, updatedAt} 或 null}` |
-| PUT | /api/save | 需登入，`{baseVersion, data}`；版本不符回 409 並附上雲端存檔；`{force:true, data}` 強制覆蓋 |
-| DELETE | /api/account | 需登入，`{password}`，刪除帳號與存檔 |
+| POST | /api/register | username,password → token,user,recoveryCode |
+| POST | /api/login | username,password → token,user |
+| POST | /api/logout | 作廢目前session |
+| GET | /api/me | user、hasRecoveryCode |
+| POST | /api/reset-password | username,recoveryCode,newPassword → 新session及新救援碼 |
+| POST | /api/recovery-code | password → 新救援碼，舊碼作廢 |
+| GET | /api/game?since=N | 帳戶、公開行情、增量K線、離線補算狀態 |
+| POST | /api/game/open | pair,side,leverage,margin,since,requestId |
+| POST | /api/game/close | id,since,requestId |
+| POST | /api/game/reset | since,requestId |
+| DELETE | /api/account | password，刪帳與所有相關資料 |
 
-登入後以 `Authorization: Bearer <token>` 呼叫。token 有效 30 天，資料庫只存 SHA-256。
+舊 /api/save 已移除。交易值以伺服器為準。requestId為1–64個英數/底線/連字號，同一請求重送須用同ID；只保留最近128筆去重紀錄，不是永久回執。
 
-## 安全設計
+## 安全與時間
 
-- 密碼：PBKDF2-SHA256、100000 次迭代、每人 16 bytes 隨機 salt。
-- 帳號不存在與密碼錯誤回同一訊息，且都會跑一次 PBKDF2（時間相近）。
-- 同一帳號 + IP 15 分鐘內失敗 10 次即鎖定；同一 IP 15 分鐘內最多註冊 10 個帳號。
-- CORS 只允許 `ALLOWED_ORIGINS` 內的網站。
-- 存檔上限 64 KB；內容由玩家瀏覽器產生，不可當作可信成績。
+- 密碼PBKDF2-SHA256 100000次，隨機salt；token只存SHA256。
+- 救援碼驗證後CAS原子消耗；session版本精確比對，重設撤銷其他登入。
+- 登入與救援操作節流；game讀取120次/分鐘、動作60次/分鐘、重置5次/分鐘。
+- 遊戲使用256bit私密HMAC-SHA256亂數，重算確定性，不回傳秘密或未結束新聞的實際方向。
+- 每請求最多補600根；剩餘時間不丟棄，追平前新交易回409 catching_up。不要把離線視作暫停。
+- CORS不是防止非瀏覽器呼叫的安全機制。
 
 ## 部署
 
+在server目錄安裝wrangler（npm install --save-dev wrangler@3），用wrangler login授權後：
+
 ```sh
-npm install
-export CLOUDFLARE_API_TOKEN=...      # 權限：Workers Scripts Edit、D1 Edit
-npx wrangler d1 create fxweb         # 把印出的 database_id 填進 wrangler.toml
+npx wrangler d1 migrations list fxweb --remote
 npx wrangler d1 migrations apply fxweb --remote
 npx wrangler deploy
 ```
 
-部署後把 Worker 網址填進前端 `config.mjs` 的 `API_BASE`。
+0002保留舊saves表，不把舊資料匯入games；只適用尚未套用0002的DB。正式變更前檢查migration紀錄並備份。
+前端config.mjs填Worker網址；不得把token或備份資料提交Git。
 
 ## 測試
 
@@ -42,4 +50,4 @@ npx wrangler deploy
 node --test --no-warnings test/api.test.mjs
 ```
 
-用 `node:sqlite` 模擬 D1（`test/d1shim.mjs`），不需要 Cloudflare 帳號。
+使用SQLite D1 shim測帳號競態、交易冪等與API安全；game-security測試涵蓋密碼學向量與離線時間重播。

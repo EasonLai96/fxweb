@@ -1,10 +1,13 @@
 // 用 node:sqlite 模擬 Cloudflare D1 的 API（prepare/bind/first/run/all/batch），只供本機測試。
 import { DatabaseSync } from "node:sqlite";
-import { readFileSync } from "node:fs";
-export function createD1(migrationFile) {
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
+// 傳入 migrations 資料夾（依檔名順序全部執行）或單一 .sql 檔
+export function createD1(migrations) {
   const db = new DatabaseSync(":memory:");
   db.exec("PRAGMA foreign_keys = ON;");
-  db.exec(readFileSync(migrationFile, "utf8"));
+  const files = statSync(migrations).isDirectory() ? readdirSync(migrations).filter(f => f.endsWith(".sql")).sort().map(f => join(migrations, f)) : [migrations];
+  for (const f of files) db.exec(readFileSync(f, "utf8"));
   const stmt = (sql, args = []) => ({
     bind: (...a) => stmt(sql, a),
     first: async () => db.prepare(sql).get(...args) ?? null,

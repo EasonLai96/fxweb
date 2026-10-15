@@ -1,17 +1,42 @@
 import * as E from "./engine.mjs";
-import { createMarket, PAIR_NAMES } from "./market.mjs";
+import { createMarket, PAIR_NAMES, NEWS_SETTLE } from "./market.mjs";
 import * as Store from "./store.mjs";
 import { drawCandles, drawSpark, drawEquity } from "./charts.mjs";
 import * as Cloud from "./cloud.mjs";
+import { createRemoteMarket } from "./remote.mjs";
 
 const THEME_KEY = "fxweb.theme";
-const market = createMarket(Date.now() & 0x7fffffff);
-let state = Store.load() || E.createAccount(10000);
-// 舊存檔可能有不在目前清單裡的貨幣對：沒有報價就無法結算，直接移除並退回保證金（不計損益）。
-state.positions = state.positions.filter(p => market.get(p.pair) != null);
+// 兩種模式：
+//   guest  = 訪客，行情與帳戶都在瀏覽器裡算（可被修改，不計成績）
+//   server = 已登入，行情與帳戶都由伺服器計算，瀏覽器只負責顯示與送出下單指令
+let mode = "guest";
+let market = null;
+let state = null;
+let busy = false;           // 伺服器請求進行中
+let lastOk = 0;             // 上次成功連上伺服器的時間
+let modeEpoch = 0, catchingUp = false;
+// 切換帳戶/登出後，舊請求不可覆蓋新畫面。
+const currentRequest = epoch => epoch === modeEpoch && mode === "server";
 
-const ui = { pair: market.pairs()[0], margin: 500, leverage: 5, paused: false, showMA: true, showNews: true, showPos: true, historyOpen: false };
-const equityPts = [];
+function enterGuest() {
+  modeEpoch++; busy = false; catchingUp = false; lastOk = 0;
+  mode = "guest";
+  market = createMarket(Date.now() & 0x7fffffff);
+  state = Store.load() || E.createAccount(10000);
+  state.positions = state.positions.filter(p => market.get(p.pair) != null);
+  equityPts.length = 0; equityPts.push(E.equity(state, market.prices()));
+}
+
+function enterServer() {
+  modeEpoch++; busy = false; catchingUp = false; lastOk = 0;
+  mode = "server";
+  market = createRemoteMarket();
+  state = E.createAccount(10000);
+  equityPts.length = 0;
+}
+
+const ui = { pair: "EUR/USD", margin: 500, leverage: 5, paused: false, showMA: true, showNews: true, showPos: true, historyOpen: false };
+const equityPts = [];       // 淨值曲線：guest 每 tick 一點；server 用伺服器每 10 根記一次的紀錄
 let newsTimer = 0, toastTimer = 0, lastNewsStep = -1;
 
 const $ = id => document.getElementById(id);
@@ -97,7 +122,7 @@ function renderChart() {
     lines.push({ price: E.liquidationPrice(pos), kind: "liq", label: `#${pos.id} 強平` });
   }
   const step = market.step();
-  const marks = ui.showNews ? market.news().filter(n => n.pair === p).map(n => ({ t: n.step, reversed: step - n.step >= 8 && n.reversed })) : [];
+  const marks = ui.showNews ? market.news().filter(n => n.pair === p).map(n => ({ t: n.step, reversed: (n.settled != null ? n.settled : step - n.step >= NEWS_SETTLE) && !!n.reversed })) : [];
   drawCandles($("chart"), cs, { theme: theme(), digits: digits(p), lines, marks, showMA: ui.showMA });
 }
 
@@ -124,15 +149,42 @@ function maxMargin(prices) {
   return Math.max(0, Math.floor(free / perMargin * 100) / 100);
 }
 
-function order(side) {
-  const prices = market.prices();
+async function order(side) {
   const margin = Number($("marginInput").value);
   if (!(margin >= 10)) { toast("保證金至少 $10", true); return; }
   ui.margin = margin;
-  const r = E.openPosition(state, prices, { pair: ui.pair, side, leverage: ui.leverage, notional: margin * ui.leverage, time: Date.now() });
+  if (mode === "server") {
+    const r = await serverCall(() => Cloud.game.open({ pair: ui.pair, side, leverage: ui.leverage, margin }, market.step()));
+    const pos = r && r.result && r.result.opened;
+    if (pos) toast(`已${side > 0 ? "做多" : "做空"} ${ui.pair}・進場 ${pos.entry.toFixed(digits(ui.pair))}・手續費 ${money(pos.feePaid)}`);
+    return;
+  }
+  const r = E.openPosition(state, market.prices(), { pair: ui.pair, side, leverage: ui.leverage, notional: margin * ui.leverage, time: Date.now() });
   if (!r.ok) { toast(r.error, true); return; }
   toast(`已${side > 0 ? "做多" : "做空"} ${ui.pair}・名目 ${money(r.position.notional)}・手續費 ${money(r.position.feePaid)}`);
   afterChange();
+}
+
+async function closePos(id, pair) {
+  if (mode === "server") {
+    const r = await serverCall(() => Cloud.game.close(id, market.step()));
+    if (r && r.result) toast(`已平倉・${r.result.pnl >= 0 ? "獲利" : "虧損"} ${signedMoney(r.result.pnl)}`, r.result.pnl < 0);
+    return;
+  }
+  const r = E.closePosition(state, id, market.get(pair), Date.now());
+  if (r.ok) toast(`已平倉・${r.pnl >= 0 ? "獲利" : "虧損"} ${signedMoney(r.pnl)}`, r.pnl < 0);
+  afterChange();
+}
+
+async function resetAll() {
+  $("confirmModal").classList.add("hidden");
+  if (mode === "server") {
+    const r = await serverCall(() => Cloud.game.reset(market.step()));
+    if (r) { equityPts.length = 0; toast("帳戶已重置為 $10,000（行情不會重新開始）"); }
+    return;
+  }
+  E.resetAccount(state); Store.clear(); equityPts.length = 0;
+  toast("帳戶已重置為 $10,000"); afterChange();
 }
 
 /* ---------- 持倉 ---------- */
@@ -196,7 +248,7 @@ function renderNewsCenter() {
   const step = market.step();
   const list = market.news().slice().reverse();
   $("newsCenterList").innerHTML = list.length ? list.map(n => {
-    const bull = n.claimed > 0, settled = step - n.step >= 8;
+    const bull = n.claimed > 0, settled = n.settled != null ? n.settled : step - n.step >= NEWS_SETTLE;
     return `<div class="news-item"><span class="nf-tag${bull ? "" : " bear"}">${n.pair}・${bull ? "利多" : "利空"}</span>${settled && n.reversed ? '<span class="rev-tag">市場反向</span>' : ""}
       <h4>${esc(n.text)}</h4><small>${settled ? (n.reversed ? "結果：市場走出相反方向" : "結果：市場照新聞方向走") : "行情發酵中…"}・${step - n.step} 根 K 線前</small></div>`;
   }).join("") : '<div class="empty-state"><div class="empty-icon">✦</div>還沒有新聞，稍等一下</div>';
@@ -204,6 +256,8 @@ function renderNewsCenter() {
 
 /* ---------- 主流程 ---------- */
 function renderAll() {
+  renderModeBadge();
+  if (mode === "server" && !market.ready()) return;
   const prices = market.prices();
   renderPairs();
   const m = renderAccount(prices);
@@ -214,19 +268,83 @@ function renderAll() {
   renderHistory();
 }
 
-function afterChange() { persist(true); equityPts.push(E.equity(state, market.prices())); renderAll(); }
+function afterChange() { Store.save(state); equityPts.push(E.equity(state, market.prices())); renderAll(); }
+
+function showEvents(events) {
+  for (const ev of events) if (ev.type === "liquidated") toast(`#${ev.id} ${ev.pair} 虧損達保證金 80%，已強制平倉`, true);
+}
 
 function loop() {
+  if (mode === "server") { poll(); return; }
   if (ui.paused) return;
   const { prices, news } = market.tick();
   const events = E.settleTick(state, prices, Date.now());
-  for (const ev of events) if (ev.type === "liquidated") toast(`#${ev.id} ${ev.pair} 虧損達保證金 80%，已強制平倉`, true);
+  showEvents(events);
   if (news && news.step !== lastNewsStep) { lastNewsStep = news.step; showNews(news); }
   equityPts.push(E.equity(state, prices));
   if (equityPts.length > 500) equityPts.shift();
-  persist(events.length > 0);
+  Store.save(state);
   renderAll();
   if (!$("newsCenter").classList.contains("hidden")) renderNewsCenter();
+}
+
+/* ---------- 伺服器模式 ---------- */
+// 套用伺服器回傳的完整畫面資料
+function applyServer(v) {
+  catchingUp = !!v.catchingUp;
+  const fresh = market.apply(v);
+  const a = v.account;
+  state.cash = a.cash; state.startingCash = a.startingCash; state.nextId = a.nextId;
+  state.positions = a.positions; state.log = a.log;
+  equityPts.length = 0; equityPts.push(...(a.eq || []), E.equity(state, market.prices()));
+  showEvents(v.events || []);
+  const latest = fresh[fresh.length - 1];
+  if (latest) showNews(latest);
+  lastOk = Date.now();
+  setSyncUi("ok", "已連線。行情與帳戶由伺服器計算。");
+  renderAll();
+  if (!$("newsCenter").classList.contains("hidden")) renderNewsCenter();
+}
+
+async function serverCall(fn) {
+  if (busy) { toast("上一個操作還在處理中", true); return null; }
+  if (!market.ready() || catchingUp) { toast("伺服器正在載入或結算離線行情，請稍候", true); return null; }
+  const epoch = modeEpoch;
+  busy = true; setTradeBusy(true);
+  try { const r = await fn(); if (!currentRequest(epoch)) return null; applyServer(r); return r; }
+  catch (e) { if (currentRequest(epoch)) handleServerError(e); return null; }
+  finally { if (epoch === modeEpoch) { busy = false; setTradeBusy(false); } }
+}
+
+async function poll() {
+  if (mode !== "server" || busy || document.hidden) return;
+  const epoch = modeEpoch;
+  busy = true;
+  try { const result = await Cloud.game.state(market.ready() ? market.step() : -1); if (currentRequest(epoch)) applyServer(result); }
+  catch (e) { if (currentRequest(epoch)) handleServerError(e, true); }
+  finally { if (epoch === modeEpoch) busy = false; }
+}
+
+function handleServerError(e, quiet = false) {
+  if (e.status === 401) return; // onSessionLost 會處理
+  setSyncUi("err", "連線問題：" + e.message);
+  if (!quiet || Date.now() - lastOk > 10000) toast(e.message, true);
+  renderModeBadge();
+}
+
+function setTradeBusy(on) {
+  for (const id of ["longBtn", "shortBtn"]) $(id).classList.toggle("is-busy", on);
+}
+
+function renderModeBadge() {
+  const server = mode === "server";
+  const offline = server && Date.now() - lastOk > 6000;
+  $("modeBadge").textContent = server ? (!lastOk ? "連線中…" : catchingUp ? "結算離線行情…" : offline ? "連線中斷" : "伺服器計算") : "訪客・本機練習";
+  $("modeBadge").className = "mode-badge " + (server ? (offline ? "warn" : "server") : "guest");
+  $("accountModeChip").textContent = server ? "已登入・成績有效" : "訪客模式・不計成績";
+  $("guestNote").classList.toggle("hidden", server);
+  $("pauseBtn").classList.toggle("hidden", server);
+  $("dataStatus").textContent = server ? "行情持續進行" : (ui.paused ? "已暫停" : "每 1.5 秒更新");
 }
 
 function bind() {
@@ -237,13 +355,12 @@ function bind() {
   $("maxBtn").onclick = () => { const v = maxMargin(market.prices()); ui.margin = v; $("marginInput").value = v; renderOrder(market.prices(), E.metrics(state, market.prices())); };
   $("positions").onclick = e => {
     const b = e.target.closest("[data-close]"); if (!b) return;
-    const r = E.closePosition(state, Number(b.dataset.close), market.get(b.dataset.pair), Date.now());
-    if (r.ok) toast(`已平倉・${r.pnl >= 0 ? "獲利" : "虧損"} ${signedMoney(r.pnl)}`, r.pnl < 0);
-    afterChange();
+    closePos(Number(b.dataset.close), b.dataset.pair);
   };
   const toggle = (id, key) => { $(id).onclick = () => { ui[key] = !ui[key]; $(id).classList.toggle("active", ui[key]); renderChart(); }; };
   toggle("maBtn", "showMA"); toggle("newsMarkBtn", "showNews"); toggle("posLineBtn", "showPos");
-  $("pauseBtn").onclick = () => { ui.paused = !ui.paused; $("pauseBtn").textContent = ui.paused ? "繼續" : "暫停"; $("dataStatus").textContent = ui.paused ? "已暫停" : "每 1.5 秒更新"; };
+  $("pauseBtn").onclick = () => { ui.paused = !ui.paused; $("pauseBtn").textContent = ui.paused ? "繼續" : "暫停"; renderModeBadge(); };
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && mode === "server") poll(); });
   $("historyToggle").onclick = () => { ui.historyOpen = !ui.historyOpen; renderHistory(); };
   $("themeBtn").onclick = () => {
     const next = theme() === "night" ? "day" : "night";
@@ -259,117 +376,54 @@ function bind() {
   $("newsFloatClose").onclick = () => $("newsFloat").classList.remove("show");
   $("resetBtn").onclick = () => $("confirmModal").classList.remove("hidden");
   $("confirmCancel").onclick = () => $("confirmModal").classList.add("hidden");
-  $("confirmOk").onclick = () => {
-    E.resetAccount(state); Store.clear(); equityPts.length = 0; dirty = true;
-    $("confirmModal").classList.add("hidden"); toast("帳戶已重置為 $10,000"); afterChange();
-  };
+  $("confirmOk").onclick = resetAll;
   window.addEventListener("resize", renderAll);
 }
 
-/* ---------- 雲端同步 ---------- */
-// 本機每 tick 都存；雲端只在「有交易變動」後 4 秒存一次，加上每 60 秒保底，避免一直打 API。
-let dirty = false, syncTimer = 0, syncing = false, lastSyncAt = 0, syncError = "";
-const SYNC_DELAY = 4000, SYNC_INTERVAL = 60000;
-
-function persist(changed) {
-  Store.save(state);
-  if (changed) dirty = true;
-  if (!Cloud.user()) return;
-  if (changed) { clearTimeout(syncTimer); syncTimer = setTimeout(syncNow, SYNC_DELAY); }
-  else if (Date.now() - lastSyncAt > SYNC_INTERVAL) syncNow();
-}
-
+/* ---------- 帳號 ---------- */
 function setSyncUi(kind, text) {
   $("syncDot").className = "sync-dot " + kind;
   if (text != null) $("authSyncText").textContent = text;
 }
 
-function summary(d) {
-  const n = Store.normalize(d);
-  if (!n) return "（無法讀取）";
-  const last = n.log.length ? n.log[n.log.length - 1] : null;
-  const lastTxt = last && last.t ? new Date(last.t).toLocaleTimeString("zh-TW", { hour12: false }) : "—";
-  return `現金 ${money(n.cash)}\n持倉 ${n.positions.length} 筆・交易 ${n.log.length} 筆\n最後交易 ${lastTxt}`;
-}
-
-function adopt(data) {
-  const n = Store.normalize(data);
-  if (!n) return false;
-  n.positions = n.positions.filter(p => market.get(p.pair) != null);
-  Object.assign(state, n);
-  Store.save(state);
-  equityPts.length = 0; equityPts.push(E.equity(state, market.prices()));
+function switchToServer() {
+  enterServer();
+  setSyncUi("busy", "連線中…");
   renderAll();
-  return true;
+  poll();
 }
 
-async function syncNow({ force = false } = {}) {
-  if (!Cloud.user() || syncing) return;
-  if (!dirty && !force && Date.now() - lastSyncAt < SYNC_INTERVAL) return;
-  syncing = true; setSyncUi("busy", "同步中…");
-  try {
-    await Cloud.pushSave(Store.snapshot(state), { force });
-    dirty = false; lastSyncAt = Date.now(); syncError = "";
-    setSyncUi("ok", `已同步到雲端（${new Date().toLocaleTimeString("zh-TW", { hour12: false })}）`);
-  } catch (e) {
-    if (e.status === 409) { syncing = false; return resolveConflict(e.body.server); }
-    if (e.status === 401) { toast("登入已過期，請重新登入", true); renderAccountBtn(); }
-    syncError = e.message; lastSyncAt = Date.now();
-    setSyncUi("err", "同步失敗：" + e.message + "（進度仍保存在這台裝置）");
-  } finally { syncing = false; }
-}
-
-function resolveConflict(server) {
-  if (!server) { Cloud.setVersion(0); return syncNow(); }
-  return new Promise(resolve => {
-    $("cloudSummary").textContent = summary(server.data) + "\n上傳於 " + new Date(server.updatedAt).toLocaleTimeString("zh-TW", { hour12: false });
-    $("localSummary").textContent = summary(Store.snapshot(state)) + "\n目前畫面";
-    $("conflictModal").classList.remove("hidden");
-    const done = async useCloud => {
-      $("conflictModal").classList.add("hidden");
-      $("useCloudBtn").onclick = $("useLocalBtn").onclick = null;
-      if (useCloud) { adopt(server.data); Cloud.setVersion(server.version); dirty = false; lastSyncAt = Date.now(); setSyncUi("ok", "已改用雲端存檔"); toast("已載入雲端存檔"); }
-      else { await syncNow({ force: true }); toast("已用這台裝置的進度覆蓋雲端"); }
-      resolve();
-    };
-    $("useCloudBtn").onclick = () => done(true);
-    $("useLocalBtn").onclick = () => done(false);
-  });
-}
-
-// 登入後：雲端沒有存檔 -> 上傳本機；有存檔且本機是全新帳戶 -> 直接載入；兩邊都有進度 -> 讓玩家選。
-async function afterLogin() {
-  setSyncUi("busy", "讀取雲端存檔…");
-  try {
-    const server = await Cloud.fetchSave();
-    const local = Store.snapshot(state);
-    const localFresh = local.positions.length === 0 && local.log.length === 0 && local.cash === local.startingCash;
-    if (!server) { Cloud.setVersion(0); dirty = true; await syncNow(); }
-    else if (localFresh) { adopt(server.data); Cloud.setVersion(server.version); lastSyncAt = Date.now(); setSyncUi("ok", "已載入雲端存檔"); }
-    else if (JSON.stringify(server.data) === JSON.stringify(local)) { Cloud.setVersion(server.version); lastSyncAt = Date.now(); setSyncUi("ok", "存檔已是最新"); }
-    else await resolveConflict(server);
-  } catch (e) {
-    setSyncUi("err", "讀取雲端存檔失敗：" + e.message);
-  }
+function switchToGuest(msg) {
+  enterGuest();
   renderAccountBtn();
+  renderAll();
+  if (msg) toast(msg);
 }
 
 function renderAccountBtn() {
-  const btn = $("accountBtn");
-  btn.classList.toggle("hidden", !Cloud.enabled());
+  $("accountBtn").classList.toggle("hidden", !Cloud.enabled());
   const u = Cloud.user();
   $("accountLabel").textContent = u || "登入";
   if (!u) $("syncDot").className = "sync-dot";
 }
 
 let authMode = "login";
+const AUTH_TEXT = {
+  login: ["登入帳號", "登入", "登入後由伺服器計算行情與帳戶，成績才算數。"],
+  register: ["建立新帳號", "註冊並登入", "註冊後會給你一組救援碼，忘記密碼時用它重設。"],
+  reset: ["忘記密碼", "重設密碼並登入", "輸入註冊時拿到的救援碼，設定新密碼。"],
+};
 function setAuthMode(mode) {
   authMode = mode;
   $("tabLogin").classList.toggle("active", mode === "login");
   $("tabRegister").classList.toggle("active", mode === "register");
-  $("authTitle").textContent = mode === "login" ? "登入帳號" : "建立新帳號";
-  $("authSubmit").textContent = mode === "login" ? "登入" : "註冊並登入";
-  $("authPass2Wrap").classList.toggle("hidden", mode !== "register");
+  const [title, submit, desc] = AUTH_TEXT[mode];
+  $("authTitle").textContent = title; $("authSubmit").textContent = submit; $("authDesc").textContent = desc;
+  $("authPassLabel").textContent = mode === "reset" ? "新密碼" : "密碼";
+  $("authPass2Wrap").classList.toggle("hidden", mode === "login");
+  $("authCodeWrap").classList.toggle("hidden", mode !== "reset");
+  $("forgotLink").classList.toggle("hidden", mode !== "login");
+  $("backToLogin").classList.toggle("hidden", mode !== "reset");
   $("authPass").autocomplete = mode === "login" ? "current-password" : "new-password";
   $("authError").textContent = "";
 }
@@ -378,48 +432,80 @@ function openAuth() {
   const u = Cloud.user();
   $("authForm").classList.toggle("hidden", !!u);
   $("authInfo").classList.toggle("hidden", !u);
-  if (u) $("authName").textContent = u;
-  else { setAuthMode(authMode); $("authPass").value = ""; $("authPass2").value = ""; }
+  if (u) {
+    $("authName").textContent = u;
+    Cloud.me().then(info => {
+      if (Cloud.user() === u && !info.hasRecoveryCode) $("authSyncText").textContent = "你還沒有救援碼。請按「產生新救援碼」，以便忘記密碼時恢復帳號。";
+    }).catch(() => {});
+  }
+  else { setAuthMode(authMode === "reset" ? "login" : authMode); $("authPass").value = ""; $("authPass2").value = ""; $("authCode").value = ""; }
   $("authModal").classList.remove("hidden");
   if (!u) setTimeout(() => $("authUser").focus(), 50);
 }
 
+// 顯示救援碼（只出現這一次），要勾選「已記下」才能關閉
+function showRecoveryCode(code, title) {
+  $("rcTitle").textContent = title;
+  $("rcCode").textContent = code;
+  $("rcAck").checked = false; $("rcDone").disabled = true;
+  $("rcCopy").textContent = "複製";
+  $("rcModal").classList.remove("hidden");
+  return new Promise(resolve => { $("rcDone").onclick = () => { $("rcModal").classList.add("hidden"); resolve(); }; });
+}
+
 function bindAuth() {
+  Cloud.onSessionLost(() => switchToGuest("登入已過期，請重新登入。現在是訪客模式。"));
   $("accountBtn").onclick = openAuth;
+  $("guestLoginLink").onclick = () => { authMode = "login"; openAuth(); };
   $("authClose").onclick = () => $("authModal").classList.add("hidden");
   $("tabLogin").onclick = () => setAuthMode("login");
   $("tabRegister").onclick = () => setAuthMode("register");
+  $("forgotLink").onclick = () => setAuthMode("reset");
+  $("backToLogin").onclick = () => setAuthMode("login");
+  $("rcAck").onchange = () => { $("rcDone").disabled = !$("rcAck").checked; };
+  $("rcCopy").onclick = async () => {
+    try { await navigator.clipboard.writeText($("rcCode").textContent); $("rcCopy").textContent = "已複製"; }
+    catch { $("rcCopy").textContent = "請手動抄寫"; }
+  };
   $("authFormEl").onsubmit = async e => {
     e.preventDefault();
     const username = $("authUser").value.trim(), password = $("authPass").value;
     const err = msg => { $("authError").textContent = msg; };
     if (!/^[A-Za-z0-9_]{3,20}$/.test(username)) return err("帳號需為 3~20 個英文字母、數字或底線");
     if (password.length < 8) return err("密碼至少 8 個字元");
-    if (authMode === "register" && password !== $("authPass2").value) return err("兩次輸入的密碼不一樣");
+    if (authMode !== "login" && password !== $("authPass2").value) return err("兩次輸入的密碼不一樣");
+    if (authMode === "reset" && $("authCode").value.replace(/[^0-9A-Za-z]/g, "").length !== 16) return err("救援碼是 16 個英數字");
     $("authSubmit").disabled = true; err("");
     try {
-      if (authMode === "login") await Cloud.login(username, password); else await Cloud.register(username, password);
+      let code = null;
+      if (authMode === "login") await Cloud.login(username, password);
+      else if (authMode === "register") code = await Cloud.register(username, password);
+      else code = await Cloud.resetPassword(username, $("authCode").value, password);
       $("authModal").classList.add("hidden");
-      toast(authMode === "login" ? `歡迎回來，${Cloud.user()}` : `帳號 ${Cloud.user()} 建立完成`);
       renderAccountBtn();
-      await afterLogin();
+      if (code) await showRecoveryCode(code, authMode === "register" ? "帳號建立完成，請記下救援碼" : "密碼已重設，這是新的救援碼");
+      toast(authMode === "login" ? `歡迎回來，${Cloud.user()}` : authMode === "register" ? `帳號 ${Cloud.user()} 建立完成` : "密碼已重設，其他裝置都已登出");
+      switchToServer();
     } catch (ex) { err(ex.message); }
     finally { $("authSubmit").disabled = false; }
   };
-  $("syncNowBtn").onclick = () => { dirty = true; syncNow(); };
-  $("logoutBtn").onclick = async () => {
-    await syncNow();
-    await Cloud.logout();
-    $("authModal").classList.add("hidden");
-    renderAccountBtn(); toast("已登出，進度仍保留在這台裝置");
-  };
-  $("deleteAccountBtn").onclick = async () => {
-    const pw = prompt("刪除後無法復原。請輸入密碼確認：");
+  $("newCodeBtn").onclick = async () => {
+    const pw = prompt("產生新的救援碼後，舊的會失效。請輸入密碼確認：");
     if (!pw) return;
-    try { await Cloud.deleteAccount(pw); $("authModal").classList.add("hidden"); renderAccountBtn(); toast("帳號與雲端存檔已刪除"); }
+    try { const code = await Cloud.newRecoveryCode(pw); $("authModal").classList.add("hidden"); await showRecoveryCode(code, "新的救援碼"); }
     catch (ex) { toast(ex.message, true); }
   };
-  window.addEventListener("pagehide", () => { if (dirty && Cloud.user()) syncNow(); });
+  $("logoutBtn").onclick = async () => {
+    await Cloud.logout();
+    $("authModal").classList.add("hidden");
+    switchToGuest("已登出。你的成績保存在伺服器，現在是訪客模式。");
+  };
+  $("deleteAccountBtn").onclick = async () => {
+    const pw = prompt("刪除後帳號與成績都無法復原。請輸入密碼確認：");
+    if (!pw) return;
+    try { await Cloud.deleteAccount(pw); $("authModal").classList.add("hidden"); switchToGuest("帳號已刪除"); }
+    catch (ex) { toast(ex.message, true); }
+  };
 }
 
 try { const t = localStorage.getItem(THEME_KEY); if (t === "night") { document.documentElement.dataset.theme = "night"; $("themeBtn").textContent = "白天"; } } catch {}
@@ -427,7 +513,5 @@ $("marginInput").value = ui.margin;
 bind();
 bindAuth();
 renderAccountBtn();
-if (Cloud.user()) afterLogin();
-equityPts.push(E.equity(state, market.prices()));
-renderAll();
+if (Cloud.enabled() && Cloud.user()) switchToServer(); else { enterGuest(); renderAll(); }
 setInterval(loop, 1500);

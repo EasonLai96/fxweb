@@ -1,4 +1,4 @@
-// 雲端帳號與存檔。token 存在 localStorage，以 Authorization: Bearer 傳給後端。
+// 帳號與伺服器端遊戲 API。token 存在 localStorage，以 Authorization: Bearer 傳給後端。
 import { API_BASE } from "./config.mjs";
 
 const AUTH_KEY = "fxweb.auth.v1";
@@ -6,64 +6,49 @@ export const enabled = () => !!API_BASE;
 
 let auth = null;
 try { auth = JSON.parse(localStorage.getItem(AUTH_KEY) || "null"); } catch { auth = null; }
-
-function persist() {
-  try { auth ? localStorage.setItem(AUTH_KEY, JSON.stringify(auth)) : localStorage.removeItem(AUTH_KEY); } catch {}
-}
+function persist() { try { auth ? localStorage.setItem(AUTH_KEY, JSON.stringify({ token: auth.token, username: auth.username })) : localStorage.removeItem(AUTH_KEY); } catch {} }
 
 export const user = () => (auth ? auth.username : null);
-export const version = () => (auth ? auth.version || 0 : 0);
-export function setVersion(v) { if (auth) { auth.version = v; persist(); } }
 
 export class ApiError extends Error {
   constructor(status, body) { super((body && body.message) || `連線失敗（${status}）`); this.status = status; this.body = body || {}; }
 }
 
+let onLogout = () => {};
+export function onSessionLost(fn) { onLogout = fn; }
+
 async function api(method, path, body) {
   const headers = {};
   if (body !== undefined) headers["Content-Type"] = "application/json";
-  if (auth) headers.Authorization = "Bearer " + auth.token;
+  const sentToken = auth?.token;
+  if (sentToken) headers.Authorization = "Bearer " + sentToken;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
   let res;
-  try {
-    res = await fetch(API_BASE + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
-  } catch {
-    throw new ApiError(0, { message: "連不上伺服器，請檢查網路" });
-  }
+  try { res = await fetch(API_BASE + path, { method, headers, signal: controller.signal, body: body === undefined ? undefined : JSON.stringify(body) }); }
+  catch { throw new ApiError(0, { message: "連線失敗或逾時。交易結果可能尚未確認，請先重新整理帳戶，不要重複下單。" }); }
+  finally { clearTimeout(timeout); }
   const data = await res.json().catch(() => ({}));
-  if (res.status === 401 && auth && path !== "/api/login") { auth = null; persist(); }
+  if (res.status === 401 && data.error === "unauthorized" && auth?.token === sentToken && sentToken) { auth = null; persist(); onLogout(); }
   if (!res.ok) throw new ApiError(res.status, data);
   return data;
 }
 
-export async function register(username, password) {
-  const r = await api("POST", "/api/register", { username, password });
-  auth = { token: r.token, username: r.user.username, version: 0 }; persist();
-  return r.user;
-}
+function setAuth(r) { auth = { token: r.token, username: r.user.username }; persist(); }
 
-export async function login(username, password) {
-  const r = await api("POST", "/api/login", { username, password });
-  auth = { token: r.token, username: r.user.username, version: 0 }; persist();
-  return r.user;
+export async function register(username, password) { const r = await api("POST", "/api/register", { username, password }); setAuth(r); return r.recoveryCode; }
+export async function login(username, password) { const r = await api("POST", "/api/login", { username, password }); setAuth(r); }
+export async function resetPassword(username, recoveryCode, newPassword) {
+  const r = await api("POST", "/api/reset-password", { username, recoveryCode, newPassword }); setAuth(r); return r.recoveryCode;
 }
+export async function newRecoveryCode(password) { return (await api("POST", "/api/recovery-code", { password })).recoveryCode; }
+export async function logout() { try { await api("POST", "/api/logout"); } catch {} auth = null; persist(); }
+export async function deleteAccount(password) { await api("DELETE", "/api/account", { password }); auth = null; persist(); }
 
-export async function logout() {
-  try { await api("POST", "/api/logout"); } catch {}
-  auth = null; persist();
-}
-
-export async function fetchSave() {
-  const r = await api("GET", "/api/save");
-  return r.save; // { data, version, updatedAt } 或 null
-}
-
-export async function pushSave(data, { force = false } = {}) {
-  const r = await api("PUT", "/api/save", force ? { force: true, data } : { baseVersion: version(), data });
-  setVersion(r.version);
-  return r;
-}
-
-export async function deleteAccount(password) {
-  await api("DELETE", "/api/account", { password });
-  auth = null; persist();
-}
+export const me = () => api("GET", "/api/me");
+export const game = {
+  state: since => api("GET", `/api/game?since=${since}`),
+  open: (order, since) => api("POST", "/api/game/open", { ...order, since, requestId: crypto.randomUUID() }),
+  close: (id, since) => api("POST", "/api/game/close", { id, since, requestId: crypto.randomUUID() }),
+  reset: since => api("POST", "/api/game/reset", { since, requestId: crypto.randomUUID() }),
+};
