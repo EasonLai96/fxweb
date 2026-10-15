@@ -356,3 +356,11 @@ html[data-theme="night"] .primary-button{background:var(--accent);color:#0b2a1e}
 .conflict-card span{font:700 12px/1.5 "DM Mono",monospace;color:var(--text-muted);white-space:pre-line}
 @media(max-width:720px){.account-btn{padding:5px 9px;font-size:11px;max-width:96px}.top-actions{gap:8px}}
 @media(max-width:380px){#newsCenterBtn2{display:none}}
+@media(max-width:720px){
+  .brand{flex:1 1 auto;min-width:0}
+  .brand>div{min-width:0}
+  .brand strong{overflow:hidden;text-overflow:ellipsis}
+  .top-actions{flex:none;gap:9px}
+  .account-btn{max-width:88px}
+}
+@media(max-width:400px){.brand strong{font-size:14px}.brand-mark{width:30px;height:30px}}
