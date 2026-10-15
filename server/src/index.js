@@ -1,10 +1,13 @@
 import { ensureProgress } from "./progress.js";
+import { joinSeason, leaveSeason, updateSeasonScore, seasonParticipationView, publicLeaderboard } from "./leaderboard.js";
+import { sharedPrice } from "./shared-market.js";
+import { PAIRS } from "../../market.mjs";
 // fxweb 後端：Cloudflare Worker + D1。帳號密碼登入、救援碼重設密碼、伺服器端計算的遊戲。
 // 密碼：PBKDF2-SHA256（Workers 上限 100000 次迭代）+ 每人隨機 salt。
 // 登入憑證：隨機 token，以 Authorization: Bearer 傳遞；資料庫只存 token 的 SHA-256。
 // 前端在 github.io、API 在 workers.dev，跨站 cookie 常被瀏覽器擋，所以用 Bearer token 而不是 cookie。
 
-import { newGame, advance, openOrder, closeOrder, resetGame, view, GameError, PERSIST_EVERY, ensureSecureGame } from "./game.js";
+import { newGame, advance, openOrder, closeOrder, resetGame, view, GameError, PERSIST_EVERY, ensureSecureGame, ensureMarketMode } from "./game.js";
 
 const PBKDF2_ITER = 100000;
 const SESSION_DAYS = 30;
@@ -247,29 +250,48 @@ async function newRecovery(req, env) {
 
 /* ---------- 遊戲（伺服器端計算） ---------- */
 // 讀取 -> 依時間推進 -> 執行動作 -> 寫回。用 version 做樂觀鎖，同時兩個請求時後到的重試。
+function sharedSecret(env) {
+  // Production must never fall back to a per-user private market.
+  // Test fixtures explicitly pass MARKET_TEST_ALLOW_LEGACY=true.
+  if (!env.SHARED_MARKET_SECRET && env.MARKET_TEST_ALLOW_LEGACY !== true) throw new Error("Shared market secret is not configured");
+  return env.SHARED_MARKET_SECRET;
+}
+function serverPrices(g, secret) {
+  if (g.marketMode !== 'shared') return g.market.prices;
+  return Object.fromEntries(Object.keys(PAIRS).map(pair => [pair, sharedPrice(secret, g.cursor, pair)]));
+}
 async function withGame(env, userId, mutate, request = null) {
+  const secret = sharedSecret(env);
   for (let attempt = 0; attempt < 4; attempt++) {
     const t = now();
     const row = await env.DB.prepare("SELECT state, version FROM games WHERE user_id = ?").bind(userId).first();
     let g, version = 0;
     if (row) { g = JSON.parse(row.state); version = row.version; }
-    else g = newGame(t);
+    else g = newGame(t, secret);
     const progressUpgraded = ensureProgress(g, t);
-    const upgraded = ensureSecureGame(g) || progressUpgraded;
+    const modeUpgraded = ensureMarketMode(g, t, secret);
+    const secureUpgraded = ensureSecureGame(g);
+    let upgraded = modeUpgraded || secureUpgraded || progressUpgraded;
     const history = Array.isArray(g.requests) ? g.requests : [];
     const previous = request && history.find(r => r.id === request.id);
     if (previous && previous.fingerprint !== request.fingerprint)
       throw new HttpError(409, "request_conflict", "requestId 已用於不同操作");
-    const before = g.market.step;
-    const adv = advance(g, t);
+    const before = g.marketMode === 'shared' ? g.cursor : g.market.step;
+    const adv = advance(g, t, secret);
+    upgraded = ensureMarketMode(g, t, secret) || upgraded;
     const catchingUp = adv.pendingSteps > 0;
-    const result = previous ? previous.result : mutate && !catchingUp ? mutate(g, t) : null;
+    const result = previous ? previous.result : mutate && !catchingUp ? mutate(g, t, secret) : null;
+    upgraded = ensureMarketMode(g, t, secret) || upgraded;
     if (request && !previous && !catchingUp) {
       // 深拷貝結果，不讓之後行情或平倉更動已提交的回執。
       g.requests = [...history, { ...request, result: JSON.parse(JSON.stringify(result)) }].slice(-128);
     }
-    const changed = !row || upgraded || catchingUp || (!!mutate && !previous) || adv.events.length > 0 || g.market.step - before >= PERSIST_EVERY;
+    const after = g.marketMode === 'shared' ? g.cursor : g.market.step;
+    // Shared flat accounts may jump over years in one read; persist the new cursor
+    // instead of rebuilding from their creation tick on every subsequent request.
+    const changed = !row || upgraded || catchingUp || (!!mutate && !previous) || adv.events.length > 0 || after - before >= PERSIST_EVERY;
     if (changed) {
+      if (!catchingUp && g.seasonParticipation?.status === 'active') updateSeasonScore(g, serverPrices(g, secret), t);
       const text = JSON.stringify(g);
       let ok;
       if (!row) ok = await env.DB.prepare("INSERT INTO games (user_id, state, version, updated_at) VALUES (?, ?, 1, ?) ON CONFLICT(user_id) DO NOTHING RETURNING version").bind(userId, text, t).first();
@@ -289,7 +311,7 @@ async function gameState(req, env) {
   await consumeRate(env, "game-read:" + user.id, 120, 60000);
   const since = sinceOf(req);
   const { g, events, t } = await withGame(env, user.id, null);
-  return { status: 200, body: view(g, since, events, t) };
+  return { status: 200, body: view(g, since, events, t, sharedSecret(env)) };
 }
 
 async function gameAction(req, env, fn) {
@@ -307,20 +329,56 @@ async function gameAction(req, env, fn) {
     id: body.requestId, fingerprint: await sha256hex(path + ":" + canonicalJson(payload)),
   };
   try {
-    const { g, events, result, t } = await withGame(env, user.id, (g, t) => fn(g, body, t), request);
-    return { status: 200, body: { ...view(g, since, events, t), result } };
+    const { g, events, result, t } = await withGame(env, user.id, (g, t, secret) => fn(g, body, t, secret), request);
+    return { status: 200, body: { ...view(g, since, events, t, sharedSecret(env)), result } };
   } catch (e) {
     if (e instanceof GameError) throw new HttpError(400, "game_error", e.message);
     throw e;
   }
 }
 
-const gameOpen = (req, env) => gameAction(req, env, (g, b, t) => {
-  const pos = openOrder(g, { pair: b.pair, side: b.side, leverage: b.leverage, margin: b.margin }, t);
+const gameOpen = (req, env) => gameAction(req, env, (g, b, t, secret) => {
+  const pos = openOrder(g, { pair: b.pair, side: b.side, leverage: b.leverage, margin: b.margin }, t, secret);
   return { opened: pos };
 });
-const gameClose = (req, env) => gameAction(req, env, (g, b, t) => ({ closed: b.id, pnl: closeOrder(g, b.id, t) }));
-const gameReset = (req, env) => gameAction(req, env, (g, b, t) => { resetGame(g, t); return { reset: true }; });
+const gameClose = (req, env) => gameAction(req, env, (g, b, t, secret) => ({ closed: b.id, pnl: closeOrder(g, b.id, t, secret) }));
+const gameReset = (req, env) => gameAction(req, env, (g, b, t, secret) => {
+  leaveSeason(g, t);
+  resetGame(g, t, secret);
+  return { reset: true };
+});
+async function leaderboardList(req, env) {
+  await consumeRate(env, "board-ip:" + (req.headers.get("CF-Connecting-IP") || "local"), 90, 60000);
+  return { status: 200, body: { leaderboard: await publicLeaderboard(env, now()) } };
+}
+async function leaderboardMe(req, env) {
+  const user = await requireUser(req, env);
+  const { g, t } = await withGame(env, user.id, null);
+  const own = seasonParticipationView(g, t);
+  return { status: 200, body: { optIn: own.status === 'active', nickname: own.nickname || null, myEntry: own.status === 'active' ? own : null, status: own.status, season: own.season } };
+}
+async function leaderboardJoin(req, env) {
+  return leaderboardAction(req, env, (g, body, t) => joinSeason(g, body.nickname, t));
+}
+async function leaderboardLeave(req, env) {
+  return leaderboardAction(req, env, (g, body, t) => { if (!leaveSeason(g, t)) throw new GameError('本季尚未參賽或已退出'); return seasonParticipationView(g, t); });
+}
+async function leaderboardAction(req, env, fn) {
+  const user = await requireUser(req, env);
+  const body = await readJson(req, 4096);
+  await consumeRate(env, "board-action:" + user.id, 5, 60000);
+  try {
+    const { g, t } = await withGame(env, user.id, (g, t, secret) => {
+      if (g.marketMode !== 'shared') throw new GameError('請先平掉舊市場持倉再加入排行榜');
+      return fn(g, body, t, secret);
+    });
+    const own = seasonParticipationView(g, t);
+    return { status: 200, body: { optIn: own.status === 'active', nickname: own.nickname || null, myEntry: own.status === 'active' ? own : null, status: own.status, season: own.season } };
+  } catch (e) {
+    if (e instanceof GameError) throw new HttpError(400, 'game_error', e.message);
+    throw e;
+  }
+}
 
 async function deleteAccount(req, env) {
   const user = await requireUser(req, env);
@@ -349,6 +407,10 @@ const ROUTES = {
   "POST /api/game/open": gameOpen,
   "POST /api/game/close": gameClose,
   "POST /api/game/reset": gameReset,
+  "GET /api/leaderboard": leaderboardList,
+  "GET /api/leaderboard/me": leaderboardMe,
+  "POST /api/leaderboard/join": leaderboardJoin,
+  "POST /api/leaderboard/leave": leaderboardLeave,
   "DELETE /api/account": deleteAccount,
 };
 

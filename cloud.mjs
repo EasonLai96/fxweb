@@ -46,6 +46,12 @@ export async function logout() { try { await api("POST", "/api/logout"); } catch
 export async function deleteAccount(password) { await api("DELETE", "/api/account", { password }); auth = null; persist(); }
 
 export const me = () => api("GET", "/api/me");
+export const leaderboard = {
+  list: () => api("GET", "/api/leaderboard"),
+  me: () => api("GET", "/api/leaderboard/me"),
+  join: nickname => api("POST", "/api/leaderboard/join", { nickname }),
+  leave: () => api("POST", "/api/leaderboard/leave", {}),
+};
 export const game = {
   state: since => api("GET", `/api/game?since=${since}`),
   open: (order, since) => api("POST", "/api/game/open", { ...order, since, requestId: crypto.randomUUID() }),

@@ -12,7 +12,7 @@ Date.now = () => clock;
 const wait = ms => { clock += ms; };
 
 function setup() {
-  const env = { DB: createD1(new URL("../migrations", import.meta.url).pathname), ALLOWED_ORIGINS: ORIGIN };
+  const env = { DB: createD1(new URL("../migrations", import.meta.url).pathname), ALLOWED_ORIGINS: ORIGIN, MARKET_TEST_ALLOW_LEGACY: true };
   const call = async (method, path, { body, token, origin = ORIGIN, ip = "1.1.1.1" } = {}) => {
     const headers = { Origin: origin, "CF-Connecting-IP": ip };
     if (body !== undefined) headers["Content-Type"] = "application/json";

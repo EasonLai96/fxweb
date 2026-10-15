@@ -118,7 +118,7 @@ test('legacy offline liquidation is tracked from activation without backdating u
 });
 
 test('API persists first legacy GET upgrade, CAS retries and request replay do not double count',async()=>{
-  const env={DB:createD1(new URL('../migrations',import.meta.url).pathname)};
+  const env={DB:createD1(new URL('../migrations',import.meta.url).pathname),MARKET_TEST_ALLOW_LEGACY:true};
   let token;
   const call=async(path,body)=>{
     const res=await worker.fetch(new Request('https://api.test/api/'+path,{

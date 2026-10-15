@@ -1,153 +1,256 @@
-// 伺服器端遊戲邏輯（純函式，方便測試）。
-// 防作弊重點：
-// 1. 行情隨機性由 256-bit 伺服器秘密的 HMAC-SHA256 決定；不把秘密送往瀏覽器。
-//    在秘密安全且 HMAC 安全的前提下，不能由已公開行情恢復亂數狀態；不保證市場無統計訊號。
-// 2. 開倉、平倉、強平都在伺服器算，瀏覽器送不出「我的現金是多少」這種資料。
-// 3. 行情依「真實經過時間」前進，不能暫停、倒轉或快轉。
+// Server-owned account settlement. Legacy private tapes are kept only while they
+// have open positions; new accounts use the one deterministic global tape.
 import * as E from "../../engine.mjs";
 import { ensureProgress, recordOpen, recordClose, resetProgress, progressView } from "./progress.js";
 import { createMarketState, secureMarketState, stepMarket, publicNews, PAIRS, NEWS_SETTLE } from "../../market.mjs";
+import { absoluteTick, makeSharedMarket, sharedPrice } from "./shared-market.js";
 
-export const TICK_MS = 1500;          // 每 1.5 秒一根 K 線
-export const MAX_CATCHUP = 600;       // 每請求最多補算 600 根（15 分鐘），不是免計風險的離線暫停。
-// 超過 15 分鐘的積欠時間不丟棄；每次請求存回進度，完全追平前禁止交易。
-export const PERSIST_EVERY = 40;      // 單純查看時，累積 40 根以上才寫回資料庫
+export const TICK_MS = 1500;
+export const MAX_CATCHUP = 600;
+export const PERSIST_EVERY = 40;
 export const EQ_EVERY = 10, EQ_KEEP = 300;
 export const START_CASH = 10000;
 export const MAX_POSITIONS = 20;
+export const MAX_HOLD_MS = 7 * 24 * 60 * 60 * 1000;
 const LOG_KEEP = 200;
+const pairs = Object.keys(PAIRS);
 
 function newSecret() {
-  // Fail closed without a CSPRNG; never fall back to Math.random or a 32-bit seed.
   const bytes = globalThis.crypto.getRandomValues(new Uint8Array(32));
   return Array.from(bytes, b => b.toString(16).padStart(2, "0")).join("");
 }
+function secretRequired(secret) {
+  if (typeof secret !== 'string' || !/^[0-9a-f]{64}$/.test(secret)) throw new Error('Shared market secret required');
+}
+function shared(g) { return g.marketMode === 'shared'; }
+function cursor(g) { return shared(g) ? g.cursor : g.market.step; }
+function tickPrices(secret, tick) {
+  return Object.fromEntries(pairs.map(pair => [pair, sharedPrice(secret, tick, pair)]));
+}
+function trimAccount(a) {
+  if (a.log.length > LOG_KEEP) a.log.splice(0, a.log.length - LOG_KEEP);
+}
+function saveEquity(a, prices, step) {
+  if (step % EQ_EVERY === 0) {
+    a.eq.push(Math.round(E.equity(a, prices) * 100) / 100);
+    if (a.eq.length > EQ_KEEP) a.eq.splice(0, a.eq.length - EQ_KEEP);
+  }
+}
+function settle(g, prices, t, step, events, expire = false) {
+  const a = g.account, positions = new Map(a.positions.map(pos => [pos.id, pos]));
+  for (const ev of E.settleTick(a, prices, t)) {
+    if (ev.type === 'liquidated') {
+      const pos = positions.get(ev.id);
+      recordClose(g, pos, E.unrealizedPnl(pos, prices[pos.pair]), 'liquidated', t);
+    }
+    events.push({ ...ev, step });
+  }
+  if (expire) {
+    for (const pos of [...a.positions]) {
+      if (!Number.isFinite(pos.openedAt) || pos.openedAt < 0 || pos.openedAt > t)
+        throw new Error('Invalid shared position opening time');
+      if (t >= pos.openedAt + MAX_HOLD_MS) {
+        const result = E.closePosition(a, pos.id, prices[pos.pair], t, 'expired');
+        recordClose(g, pos, result.pnl, 'expired', t);
+        events.push({ type: 'expired', id: pos.id, pair: pos.pair, pnl: result.pnl, step });
+      }
+    }
+  }
+  saveEquity(a, prices, step);
+}
 
-// Call before advance and persist if true, including GETs. Legacy future biases
-// and phases were derivable from the old seed, so replace those too, not balances.
+// Existing insecure private seeds are rekeyed without changing historical prices.
 export function ensureSecureGame(g) {
+  if (shared(g)) return false;
   if (g.market.rngVersion !== undefined) {
-    if (g.market.rngVersion !== "hmac-sha256-v1" || !/^[0-9a-f]{64}$/.test(g.market.secret || "")) throw new Error("Invalid secure game");
+    if (g.market.rngVersion !== 'hmac-sha256-v1' || !/^[0-9a-f]{64}$/.test(g.market.secret || '')) throw new Error('Invalid secure game');
     return false;
   }
   const fresh = createMarketState(undefined, { secret: newSecret(), warmup: 0 });
   secureMarketState(g.market, fresh.secret);
   g.market.phase = fresh.phase;
-  for (const p of Object.keys(PAIRS)) g.market.bias[p] = { v: 0, left: 0 };
+  for (const p of pairs) g.market.bias[p] = { v: 0, left: 0 };
   g.market.news = [];
   return true;
 }
 
-export function newGame(now) {
-  const market = createMarketState(undefined, { secret: newSecret() });
+// A secret is mandatory for production shared accounts; no implicit per-user
+// fallback is permitted. No global secret or globally generated tape is persisted.
+export function newGame(now, marketSecret) {
+  if (!Number.isFinite(now) || now < 0) throw new Error('Invalid game clock');
   const account = E.createAccount(START_CASH);
   account.eq = [];
-  const g = { market, account, lastStepAt: now, resets: 0 };
+  let g;
+  if (marketSecret !== undefined) {
+    secretRequired(marketSecret);
+    g = { marketMode: 'shared', cursor: absoluteTick(now), account, resets: 0, seasonResetRequired: false };
+  } else {
+    // Historical pure-unit-test compatibility only; index must require env secret.
+    g = { market: createMarketState(undefined, { secret: newSecret() }), account, lastStepAt: now, resets: 0 };
+  }
   ensureProgress(g, now, true);
   return g;
 }
 
-// 依經過時間推進行情，逐根檢查強平。回傳這次推進產生的事件。
-// 結果只取決於存檔內容與 now，所以同一份存檔重算幾次結果都一樣（沒寫回也不會出錯）。
-export function advance(g, now) {
-  if (!Number.isFinite(now) || !Number.isFinite(g.lastStepAt)) throw new Error("Invalid game clock");
-  ensureProgress(g, now);
+// Do not carry a single position onto a different price curve. Flat accounts
+// can change on the next request, retaining money, statistics and receipts.
+export function ensureMarketMode(g, now, marketSecret) {
+  if (shared(g)) { secretRequired(marketSecret); return false; }
+  if (marketSecret === undefined) return false;
+  secretRequired(marketSecret);
+  if (g.account.positions.length) {
+    // Never move active legacy positions; even when months behind, their own
+    // private tape is the sole source of valuation and liquidation.
+    if (g.marketMode !== 'legacy') { g.marketMode = 'legacy'; return true; }
+    return false;
+  }
+  const head = absoluteTick(now);
+  delete g.market;
+  delete g.lastStepAt;
+  g.marketMode = 'shared';
+  g.cursor = head;
+  g.seasonResetRequired = true;
+  return true;
+}
+
+function advanceLegacy(g, now) {
+  if (!Number.isFinite(g.lastStepAt)) throw new Error('Invalid game clock');
   const due = Math.max(0, Math.floor((now - g.lastStepAt) / TICK_MS));
-  const n = Math.min(due, MAX_CATCHUP);
-  if (n === 0) return { steps: 0, events: [], skipped: false, pendingSteps: 0 };
-  // Keep the original tick grid, including fractional remainder. Never discard
-  // elapsed ticks or anchor to request time: polling cannot alter market history.
-  const pendingSteps = due - n;
-  const skipped = pendingSteps > 0; // historical field means batch-limited, NOT dropped
-  const events = [];
+  const n = Math.min(due, MAX_CATCHUP), events = [];
+  if (!n) return { steps: 0, events, skipped: false, pendingSteps: 0 };
   const a = g.account;
   for (let i = 0; i < n; i++) {
     const t = g.lastStepAt + (i + 1) * TICK_MS;
     const { prices } = stepMarket(g.market);
-    const step = g.market.step;
-    // Snapshot position metadata before settleTick removes liquidated positions.
-    const positions = new Map(a.positions.map(pos => [pos.id, pos]));
-    for (const ev of E.settleTick(a, prices, t)) {
-      if (ev.type === "liquidated") {
-        const pos = positions.get(ev.id);
-        recordClose(g, pos, E.unrealizedPnl(pos, prices[pos.pair]), "liquidated", t);
-      }
-      events.push({ ...ev, step });
-    }
-    if (step % EQ_EVERY === 0) {
-      a.eq.push(Math.round(E.equity(a, prices) * 100) / 100);
-      if (a.eq.length > EQ_KEEP) a.eq.splice(0, a.eq.length - EQ_KEEP);
+    settle(g, prices, t, g.market.step, events);
+    // Existing test-only private fixtures retain historical replay behavior.
+    // Production calls ensureMarketMode after advance; once the final position
+    // settles, no later private price can affect money or progress.
+    if (!a.positions.length && g.marketMode === 'legacy') {
+      g.lastStepAt = t;
+      trimAccount(a);
+      return { steps: i + 1, fastForwarded: due - i - 1, events, skipped: false, pendingSteps: 0 };
     }
   }
-  if (a.log.length > LOG_KEEP) a.log.splice(0, a.log.length - LOG_KEEP);
+  trimAccount(a);
   g.lastStepAt += n * TICK_MS;
-  return { steps: n, events, skipped, pendingSteps };
+  return { steps: n, events, skipped: due > n, pendingSteps: due - n };
+}
+function advanceShared(g, now, marketSecret) {
+  secretRequired(marketSecret);
+  if (!Number.isSafeInteger(g.cursor) || g.cursor < 0) throw new Error('Invalid shared cursor');
+  const head = absoluteTick(now), due = Math.max(0, head - g.cursor);
+  const events = [], a = g.account;
+  if (!a.positions.length) {
+    // With no exposure, price history before head cannot change the account.
+    g.cursor = head;
+    if (due) saveEquity(a, tickPrices(marketSecret, head), head);
+    return { steps: 0, fastForwarded: due, events, skipped: false, pendingSteps: 0 };
+  }
+  const n = Math.min(due, MAX_CATCHUP);
+  for (let i = 1; i <= n; i++) {
+    const tick = g.cursor + i;
+    settle(g, tickPrices(marketSecret, tick), tick * TICK_MS, tick, events, true);
+    if (!a.positions.length) {
+      // All positions have just settled at their historical tick. Skipping the
+      // remainder now is safe, but never settle them at today's head price.
+      g.cursor = head;
+      trimAccount(a);
+      return { steps: i, fastForwarded: due - i, events, skipped: false, pendingSteps: 0 };
+    }
+  }
+  g.cursor += n;
+  trimAccount(a);
+  return { steps: n, events, skipped: due > n, pendingSteps: due - n };
+}
+export function advance(g, now, marketSecret) {
+  if (!Number.isFinite(now) || now < 0) throw new Error('Invalid game clock');
+  ensureProgress(g, now);
+  if (shared(g)) return advanceShared(g, now, marketSecret);
+  ensureSecureGame(g);
+  return advanceLegacy(g, now);
 }
 
 export class GameError extends Error { constructor(msg) { super(msg); } }
-
-function requireCaughtUp(g, now) {
-  if (!Number.isFinite(now) || now - g.lastStepAt >= TICK_MS) throw new GameError("行情補算中，請追平後再交易");
+function remaining(g, now) {
+  return shared(g) ? Math.max(0, absoluteTick(now) - g.cursor)
+    : Math.max(0, Math.floor((now - g.lastStepAt) / TICK_MS));
 }
-
-export function openOrder(g, { pair, side, leverage, margin }, now) {
+function requireCaughtUp(g, now) {
+  if (!Number.isFinite(now) || remaining(g, now) > 0) throw new GameError('行情補算中，請追平後再交易');
+}
+function accountPrices(g, secret) {
+  if (shared(g)) { secretRequired(secret); return tickPrices(secret, g.cursor); }
+  return { ...g.market.prices };
+}
+export function openOrder(g, { pair, side, leverage, margin }, now, marketSecret) {
   requireCaughtUp(g, now);
-  if (!Object.prototype.hasOwnProperty.call(PAIRS, pair)) throw new GameError("不支援的貨幣對");
-  if (side !== 1 && side !== -1) throw new GameError("方向錯誤");
-  if (!Number.isInteger(leverage)) throw new GameError("槓桿必須是整數");
-  if (typeof margin !== "number" || !Number.isFinite(margin) || margin < 10 || margin > 1e9) throw new GameError("保證金至少 $10");
+  if (!shared(g) && marketSecret !== undefined) throw new GameError('舊市場停止開倉；請先平掉舊持倉以切換全球市場');
+  if (!Object.prototype.hasOwnProperty.call(PAIRS, pair)) throw new GameError('不支援的貨幣對');
+  if (side !== 1 && side !== -1) throw new GameError('方向錯誤');
+  if (!Number.isInteger(leverage)) throw new GameError('槓桿必須是整數');
+  if (typeof margin !== 'number' || !Number.isFinite(margin) || margin < 10 || margin > 1e9) throw new GameError('保證金至少 $10');
   if (g.account.positions.length >= MAX_POSITIONS) throw new GameError(`最多同時持有 ${MAX_POSITIONS} 筆`);
   margin = Math.floor(margin * 100) / 100;
-  const r = E.openPosition(g.account, { ...g.market.prices }, { pair, side, leverage, notional: margin * leverage, time: now });
+  const prices = accountPrices(g, marketSecret);
+  // Preserve the exact order time: expiry occurs on the first historical tick
+  // at/after openedAt + seven days, never up to 1499 ms early.
+  const r = E.openPosition(g.account, prices, { pair, side, leverage, notional: margin * leverage, time: now });
   if (!r.ok) throw new GameError(r.error);
   recordOpen(g, r.position, now);
-  if (g.account.log.length > LOG_KEEP) g.account.log.splice(0, g.account.log.length - LOG_KEEP);
+  trimAccount(g.account);
   return r.position;
 }
-
-export function closeOrder(g, id, now) {
+export function closeOrder(g, id, now, marketSecret) {
   requireCaughtUp(g, now);
   const pos = g.account.positions.find(p => p.id === id);
-  if (!pos) throw new GameError("找不到持倉（可能已被強制平倉）");
-  const r = E.closePosition(g.account, id, g.market.prices[pos.pair], now);
-  recordClose(g, pos, r.pnl, "manual", now);
-  if (g.account.log.length > LOG_KEEP) g.account.log.splice(0, g.account.log.length - LOG_KEEP);
+  if (!pos) throw new GameError('找不到持倉（可能已被強制平倉）');
+  const prices = accountPrices(g, marketSecret);
+  const r = E.closePosition(g.account, id, prices[pos.pair], now);
+  recordClose(g, pos, r.pnl, 'manual', now);
+  trimAccount(g.account);
   return r.pnl;
 }
-
-export function resetGame(g, now = g.lastStepAt) {
+export function resetGame(g, now = g.lastStepAt, marketSecret) {
   resetProgress(g, now);
   E.resetAccount(g.account);
   g.account.eq = [];
   g.resets = (g.resets || 0) + 1;
+  if (shared(g)) g.seasonResetRequired = false;
+  else if (marketSecret !== undefined) ensureMarketMode(g, now, marketSecret);
+  if (shared(g)) g.seasonResetRequired = false;
 }
 
-// 給瀏覽器看的資料：只有已發生的 K 線、公開新聞、自己的帳戶。
-// since = 瀏覽器已經有的最後一根 K 線編號；-1 或太舊則給完整資料。
-export function view(g, since, events = [], now = Date.now()) {
-  const m = g.market, step = m.step;
-  const full = !(Number.isInteger(since) && since >= 0 && since <= step && step - since < m.history);
+// Head tape is live even while the account is still processing historical
+// ticks. accountValuation uses the SETTLED cursor, never the head quote.
+export function view(g, since, events = [], now = Date.now(), marketSecret) {
+  const isShared = shared(g);
+  const m = isShared ? makeSharedMarket(marketSecret, absoluteTick(now)) : g.market;
+  const step = m.step, full = !(Number.isInteger(since) && since >= 0 && since <= step && step - since < m.history);
   const candles = {};
-  for (const p of Object.keys(m.candles)) candles[p] = full ? m.candles[p] : m.candles[p].filter(c => c.t > since);
+  for (const p of pairs) candles[p] = full ? m.candles[p] : m.candles[p].filter(c => c.t > since);
+  const a = g.account, pending = remaining(g, now);
+  const settledStep = cursor(g);
+  const settledPrices = isShared ? (settledStep === step ? m.prices : tickPrices(marketSecret, settledStep)) : m.prices;
+  const headPrices = { ...m.prices };
   const newsFrom = full ? -Infinity : since - NEWS_SETTLE - 1;
-  const a = g.account;
   return {
     step, full, tickMs: TICK_MS,
-    catchingUp: now - g.lastStepAt >= TICK_MS,
-    remainingTicks: Math.max(0, Math.floor((now - g.lastStepAt) / TICK_MS)),
-    catchupBatchTicks: MAX_CATCHUP,
-    nextTickIn: Math.max(0, g.lastStepAt + TICK_MS - now),
-    prices: { ...m.prices },
-    candles,
-    news: m.news.filter(n => n.step > newsFrom).map(n => publicNews(n, step)),
-    account: {
-      cash: a.cash, startingCash: a.startingCash, nextId: a.nextId,
-      positions: a.positions,
-      log: a.log.filter(l => l.type === "close").slice(-15),
-      eq: a.eq,
-    },
-    events: events.filter(e => !Number.isInteger(since) || e.step > since),
-    resets: g.resets || 0,
-    progress: progressView(g, now),
+    marketMode: isShared ? 'shared' : 'legacy',
+    switchStatus: isShared ? (g.seasonResetRequired ? 'reset_required' : 'ready') : 'close_legacy_positions',
+    seasonResetRequired: !!g.seasonResetRequired,
+    accountCursor: settledStep, accountSettledAt: isShared ? settledStep * TICK_MS : g.lastStepAt,
+    accountValuation: { step: settledStep, prices: { ...settledPrices }, ...E.metrics(a, settledPrices) },
+    headStep: step, headPrices,
+    catchingUp: pending > 0, remainingTicks: pending, catchupBatchTicks: MAX_CATCHUP,
+    nextTickIn: isShared ? Math.max(0, (step + 1) * TICK_MS - now) : Math.max(0, g.lastStepAt + TICK_MS - now),
+    prices: headPrices, candles,
+    news: isShared ? m.news.filter(n => n.step > newsFrom) : m.news.filter(n => n.step > newsFrom).map(n => publicNews(n, step)),
+    account: { cash: a.cash, startingCash: a.startingCash, nextId: a.nextId,
+      positions: a.positions, log: a.log.filter(l => l.type === 'close').slice(-15), eq: a.eq },
+    // Shared candles may already be at head while account events originate at
+    // an older cursor. Do not hide newly settled expiry/liquidation by since.
+    events: isShared ? events : events.filter(e => !Number.isInteger(since) || e.step > since),
+    resets: g.resets || 0, progress: progressView(g, now),
   };
 }

@@ -1,4 +1,5 @@
 import { initExtras } from "./extras.mjs";
+import { initLeaderboard } from "./leaderboard-ui.mjs";
 import * as E from "./engine.mjs";
 import { createMarket, PAIR_NAMES, NEWS_SETTLE } from "./market.mjs";
 import * as Store from "./store.mjs";
@@ -16,13 +17,14 @@ let state = null;
 let busy = false;           // 伺服器請求進行中
 let lastOk = 0;             // 上次成功連上伺服器的時間
 let modeEpoch = 0, catchingUp = false;
-let progress = null, resets = 0, extras = null;
+let progress = null, resets = 0, extras = null, leaderUI = null;
+let serverMarketMode = "shared", switchStatus = "ready", settledPrices = null, accountSettledAt = null, remainingTicks = 0, lastMarketMode = null;
 // 切換帳戶/登出後，舊請求不可覆蓋新畫面。
 const currentRequest = epoch => epoch === modeEpoch && mode === "server";
 
 function enterGuest() {
   modeEpoch++; busy = false; catchingUp = false; lastOk = 0;
-  progress = null; resets = 0;
+  progress = null; resets = 0; settledPrices = null; accountSettledAt = null; remainingTicks = 0; serverMarketMode = "shared"; switchStatus = "ready"; lastMarketMode = null;
   mode = "guest";
   market = createMarket(Date.now() & 0x7fffffff);
   state = Store.load() || E.createAccount(10000);
@@ -32,7 +34,7 @@ function enterGuest() {
 
 function enterServer() {
   modeEpoch++; busy = false; catchingUp = false; lastOk = 0;
-  progress = null; resets = 0;
+  progress = null; resets = 0; settledPrices = null; accountSettledAt = null; remainingTicks = 0; serverMarketMode = "shared"; switchStatus = "ready"; lastMarketMode = null;
   mode = "server";
   market = createRemoteMarket();
   state = E.createAccount(10000);
@@ -95,7 +97,7 @@ function selectPair(p) { ui.pair = p; renderAll(); }
 
 /* ---------- 帳戶 ---------- */
 function renderAccount(prices) {
-  const m = E.metrics(state, prices);
+  const m = mode === "server" && settledPrices ? E.metrics(state, settledPrices) : E.metrics(state, prices);
   const floating = m.equity - state.cash;
   const ret = m.equity / state.startingCash - 1;
   $("equity").textContent = money(m.equity);
@@ -143,7 +145,7 @@ function renderOrder(prices, m) {
   $("riskPercent").textContent = (E.LIQ_LOSS / lev * 100).toFixed(2) + "%";
   const fake = side => E.liquidationPrice({ pair: p, side, leverage: lev, entry: price });
   $("liqPreview").textContent = `${fake(1).toFixed(digits(p))} / ${fake(-1).toFixed(digits(p))}`;
-  const frozen = m.frozen;
+  const frozen = m.frozen || mode === "server" && (serverMarketMode === "legacy" || catchingUp || Date.now() - lastOk > 6000);
   $("longBtn").disabled = frozen; $("shortBtn").disabled = frozen;
 }
 
@@ -268,7 +270,7 @@ function renderAll() {
   const m = renderAccount(prices);
   renderChart();
   renderOrder(prices, m);
-  renderPositions(prices);
+  renderPositions(mode === "server" && catchingUp && settledPrices ? settledPrices : prices);
   renderEquity();
   renderHistory();
 }
@@ -276,7 +278,10 @@ function renderAll() {
 function afterChange() { Store.save(state); equityPts.push(E.equity(state, market.prices())); renderAll(); }
 
 function showEvents(events) {
-  for (const ev of events) if (ev.type === "liquidated") toast(`#${ev.id} ${ev.pair} 虧損達保證金 80%，已強制平倉`, true);
+  for (const ev of events) {
+    if (ev.type === "liquidated") toast(`#${ev.id} ${ev.pair} 虧損達保證金 80%，已強制平倉`, true);
+    if (ev.type === "expired") toast(`#${ev.id} ${ev.pair} 持倉滿 7 天，到期已自動平倉`);
+  }
 }
 
 function loop() {
@@ -297,17 +302,26 @@ function loop() {
 // 套用伺服器回傳的完整畫面資料
 function applyServer(v) {
   catchingUp = !!v.catchingUp;
+  remainingTicks = v.remainingTicks || 0;
+  serverMarketMode = v.marketMode || "legacy";
+  switchStatus = v.switchStatus || "ready";
+  settledPrices = v.accountValuation?.prices || null;
+  accountSettledAt = v.accountSettledAt || null;
+  if (lastMarketMode === "legacy" && serverMarketMode === "shared") toast("舊持倉已結束，現在使用與其他玩家相同的虛構行情。參賽需自願重置新回合。");
+  lastMarketMode = serverMarketMode;
   progress = v.progress || null; resets = v.resets || 0;
   const fresh = market.apply(v);
   const a = v.account;
   state.cash = a.cash; state.startingCash = a.startingCash; state.nextId = a.nextId;
   state.positions = a.positions; state.log = a.log;
-  equityPts.length = 0; equityPts.push(...(a.eq || []), E.equity(state, market.prices()));
+  equityPts.length = 0; equityPts.push(...(a.eq || []), E.equity(state, settledPrices || market.prices()));
   showEvents(v.events || []);
   const latest = fresh[fresh.length - 1];
   if (latest) showNews(latest);
   lastOk = Date.now();
-  setSyncUi("ok", "已連線。行情與帳戶由伺服器計算。");
+  setSyncUi("ok", catchingUp
+    ? `共同行情正在補算；帳戶僅結算至 ${new Date(accountSettledAt || Date.now()).toLocaleString("zh-TW")}，尚差 ${remainingTicks} 根，不能交易。`
+    : serverMarketMode === "legacy" ? "舊持倉仍用原本的個人行情，請結清後切換到全場共用虛構行情。" : "已連線。登入玩家共用同一組虛構行情。");
   renderAll();
   if (!$("newsCenter").classList.contains("hidden")) renderNewsCenter();
 }
@@ -315,6 +329,7 @@ function applyServer(v) {
 async function serverCall(fn) {
   if (busy) { toast("上一個操作還在處理中", true); return null; }
   if (!market.ready() || catchingUp) { toast("伺服器正在載入或結算離線行情，請稍候", true); return null; }
+  if (Date.now() - lastOk > 6000) { toast("報價已超過 6 秒未更新，請等待重新連線", true); poll(); return null; }
   const epoch = modeEpoch;
   busy = true; setTradeBusy(true);
   try { const r = await fn(); if (!currentRequest(epoch)) return null; applyServer(r); return r; }
@@ -345,12 +360,12 @@ function setTradeBusy(on) {
 function renderModeBadge() {
   const server = mode === "server";
   const offline = server && Date.now() - lastOk > 6000;
-  $("modeBadge").textContent = server ? (!lastOk ? "連線中…" : catchingUp ? "結算離線行情…" : offline ? "連線中斷" : "伺服器計算") : "訪客・本機練習";
+  $("modeBadge").textContent = server ? (!lastOk ? "連線中…" : catchingUp ? `補算中・差${remainingTicks}根` : offline ? "連線中斷" : serverMarketMode === "legacy" ? "舊帳戶個人行情" : "全場共同行情") : "訪客・本機練習";
   $("modeBadge").className = "mode-badge " + (server ? (offline ? "warn" : "server") : "guest");
-  $("accountModeChip").textContent = server ? "已登入・成績有效" : "訪客模式・不計成績";
+  $("accountModeChip").textContent = server ? serverMarketMode === "legacy" ? "舊持倉・暫停新開倉" : catchingUp ? "共同行情・帳戶補算中" : "共同行情・登入帳戶" : "訪客模式・不計成績";
   $("guestNote").classList.toggle("hidden", server);
   $("pauseBtn").classList.toggle("hidden", server);
-  $("dataStatus").textContent = server ? "行情持續進行" : (ui.paused ? "已暫停" : "每 1.5 秒更新");
+  $("dataStatus").textContent = server ? catchingUp ? `帳戶已結算至 ${accountSettledAt ? new Date(accountSettledAt).toLocaleString("zh-TW") : "較早時段"}，尚差 ${remainingTicks} 根` : serverMarketMode === "legacy" ? "舊持倉沿用個人行情" : "所有登入玩家同價・1.5 秒更新" : (ui.paused ? "已暫停" : "每 1.5 秒更新");
 }
 
 function bind() {
@@ -536,5 +551,16 @@ extras = initExtras({
     } finally { if (epoch === modeEpoch) busy = false; }
   },
   onToast: toast,
+});
+leaderUI = initLeaderboard({
+  request: (action, data) => {
+    if (action === "list") return Cloud.leaderboard.list();
+    if (action === "me") return Cloud.leaderboard.me();
+    if (action === "join") return Cloud.leaderboard.join(data.nickname);
+    if (action === "leave") return Cloud.leaderboard.leave();
+    throw new Error("未知的排行榜操作");
+  },
+  onToast: toast,
+  getContext: () => ({ mode, username: Cloud.user() }),
 });
 setInterval(loop, 1500);

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import worker from "../src/index.js";
 import {createD1} from "./d1shim.mjs";
 test("progress CAS upgrade, idempotency, and untrusted payload isolation", async()=>{
- const env={DB:createD1(new URL("../migrations",import.meta.url).pathname),ALLOWED_ORIGINS:"https://easonlai96.github.io"};let token;
+ const env={DB:createD1(new URL("../migrations",import.meta.url).pathname),ALLOWED_ORIGINS:"https://easonlai96.github.io",MARKET_TEST_ALLOW_LEGACY:true};let token;
  const call=async(path,body,method="POST")=>{const r=await worker.fetch(new Request("https://test"+path,{method,headers:{"Content-Type":"application/json",...(token?{Authorization:"Bearer "+token}:{})},body:method==="GET"?undefined:JSON.stringify(body)}),env);const data=await r.json();assert.equal(r.status, path==="/api/register"?201:200,JSON.stringify(data));return data;};
  token=(await call("/api/register",{username:"progress_user",password:"strong-password"})).token;
  let g=await call("/api/game",null,"GET");assert.equal(g.progress.stats.closedTrades,0);
