@@ -107,3 +107,10 @@ export function resetAccount(state) {
   state.log = fresh.log;
   state.nextId = fresh.nextId;
 }
+
+// 強平價：虧損達保證金 80% 時的價格。
+// pnl = side*(P-entry)*(notional/entry) = -LIQ_LOSS*margin，margin = notional/leverage
+// => P = entry * (1 - side*LIQ_LOSS/leverage)
+export function liquidationPrice(pos) {
+  return pos.entry * (1 - pos.side * LIQ_LOSS / pos.leverage);
+}

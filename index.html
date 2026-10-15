@@ -16,14 +16,31 @@
 </header>
 
 <section id="account">
-  <div class="stat"><span>淨值</span><b id="equity">-</b></div>
+  <div class="stat big"><span>淨值</span><b id="equity">-</b><em id="retPct"></em></div>
   <div class="stat"><span>現金</span><b id="cash">-</b></div>
   <div class="stat"><span>已用保證金</span><b id="used">-</b></div>
   <div class="stat"><span>可用</span><b id="free">-</b></div>
+  <div class="stat"><span>保證金使用率</span><b id="usage">-</b></div>
+  <div class="meter"><div id="meterBar"></div></div>
   <div id="frozen" class="frozen hidden">帳戶已凍結（淨值 ≤ 0），請平倉或重置</div>
 </section>
 
 <section id="quotes"></section>
+
+<section id="chartBox">
+  <div class="chart-hd">
+    <b id="chartPair">EUR/USD</b>
+    <span id="chartPrice" class="price"></span>
+    <span id="chartChg" class="chg"></span>
+  </div>
+  <canvas id="kline"></canvas>
+  <div class="legend">▲ 新聞　<span class="rev">▲</span> 反向走勢　虛線：進場價（藍）、強平價（橘）</div>
+</section>
+
+<section id="newsBox">
+  <h2>新聞快訊</h2>
+  <ul id="newsList"><li class="empty">等待第一則新聞…</li></ul>
+</section>
 
 <section id="order">
   <h2>下單</h2>
@@ -44,13 +61,26 @@
       <button id="short" class="short">做空</button>
     </div>
   </div>
+  <div id="orderInfo" class="info"></div>
   <div id="orderMsg" class="msg"></div>
 </section>
 
 <section id="positions">
   <h2>持倉</h2>
-  <table id="posTable"><thead><tr><th>貨幣對</th><th>方向</th><th>名目</th><th>槓桿</th><th>進場</th><th>現價</th><th>損益</th><th></th></tr></thead><tbody></tbody></table>
+  <div class="table-wrap">
+  <table id="posTable"><thead><tr><th>貨幣對</th><th>方向</th><th>名目</th><th>槓桿</th><th>進場</th><th>現價</th><th>強平</th><th>損益</th><th></th></tr></thead><tbody></tbody></table>
+  </div>
   <p id="noPos" class="empty">目前沒有持倉</p>
+</section>
+
+<section id="equityBox">
+  <h2>淨值曲線</h2>
+  <canvas id="equityChart"></canvas>
+</section>
+
+<section id="history">
+  <h2>最近成交</h2>
+  <ul id="histList"><li class="empty">還沒有成交紀錄</li></ul>
 </section>
 
 <dialog id="menu">
