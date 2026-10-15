@@ -1,97 +1,158 @@
 <!doctype html>
-<html lang="zh-Hant">
+<html lang="zh-Hant" data-theme="day">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>槓桿交易練習場</title>
+<meta name="theme-color" content="#eff5f2">
+<title>槓桿交易練習場 · 外匯模擬交易</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%23213b3b'/%3E%3Cpath d='M10 40l12-12 9 8 9-14 14 10' fill='none' stroke='%23b8f0d6' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Nunito:wght@600;700;800;900&display=swap">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-<header>
-  <div class="brand">槓桿交易練習場 <span class="demo">練習・非真實行情</span></div>
-  <div class="hd-right">
-    <button id="colorToggle" class="ghost" title="切換漲跌顏色">紅漲綠跌</button>
-    <button id="menuBtn" class="ghost">選單</button>
-  </div>
-</header>
-
-<section id="account">
-  <div class="stat big"><span>淨值</span><b id="equity">-</b><em id="retPct"></em></div>
-  <div class="stat"><span>現金</span><b id="cash">-</b></div>
-  <div class="stat"><span>已用保證金</span><b id="used">-</b></div>
-  <div class="stat"><span>可用</span><b id="free">-</b></div>
-  <div class="stat"><span>保證金使用率</span><b id="usage">-</b></div>
-  <div class="meter"><div id="meterBar"></div></div>
-  <div id="frozen" class="frozen hidden">帳戶已凍結（淨值 ≤ 0），請平倉或重置</div>
-</section>
-
-<section id="quotes"></section>
-
-<section id="chartBox">
-  <div class="chart-hd">
-    <b id="chartPair">EUR/USD</b>
-    <span id="chartPrice" class="price"></span>
-    <span id="chartChg" class="chg"></span>
-  </div>
-  <canvas id="kline"></canvas>
-  <div class="legend">▲ 新聞　<span class="rev">▲</span> 反向走勢　虛線：進場價（藍）、強平價（橘）</div>
-</section>
-
-<section id="newsBox">
-  <h2>新聞快訊</h2>
-  <ul id="newsList"><li class="empty">等待第一則新聞…</li></ul>
-</section>
-
-<section id="order">
-  <h2>下單</h2>
-  <div class="row">
-    <label>貨幣對
-      <select id="pair"></select>
-    </label>
-    <label>名目(USD)
-      <input id="notional" type="number" value="10000" min="1" step="100" inputmode="numeric">
-    </label>
-  </div>
-  <div class="row">
-    <label>槓桿
-      <select id="lev"><option>1</option><option>2</option><option selected>5</option><option>10</option></select>
-    </label>
-    <div class="buy-sell">
-      <button id="long" class="long">做多</button>
-      <button id="short" class="short">做空</button>
+<div class="app-shell">
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 40 40"><path d="M7 26l7-7 6 5 6-9 7 6" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </span>
+      <div><strong>槓桿交易練習場</strong><small>FX PRACTICE ROOM</small></div>
     </div>
+    <div class="top-actions">
+      <span class="session-pill"><span class="live-dot"></span>模擬帳戶</span>
+      <button id="themeBtn" class="text-button" type="button">夜間</button>
+      <button id="newsCenterBtn2" class="text-button" type="button">新聞</button>
+      <button id="resetBtn" class="text-button" type="button">重新開始</button>
+    </div>
+  </header>
+
+  <main class="main">
+    <section class="balance-strip" aria-label="帳戶概覽">
+      <div class="balance-lead">
+        <div class="eyebrow">我的交易小帳本 <span class="account-mode-chip">模擬帳戶</span></div>
+        <div class="balance-title">帳戶總權益 <span id="equity" class="money-large">$10,000.00</span></div>
+        <p>報酬率 <b id="retPct">+0.00%</b>　本機存檔，不是可信成績。</p>
+      </div>
+      <div class="metric"><span>可用餘額</span><strong id="free">$0.00</strong></div>
+      <div class="metric"><span>浮動盈虧</span><strong id="floating">$0.00</strong></div>
+      <div class="metric"><span>已用保證金</span><strong id="usedMargin">$0.00</strong></div>
+      <div class="metric"><span>保證金使用率</span><strong id="usage">0.0%</strong><div class="meter"><i id="meterBar"></i></div></div>
+    </section>
+
+    <div class="workspace">
+      <aside class="panel market-panel">
+        <div class="panel-heading"><div><span class="section-kicker">MARKET WATCH</span><h2>貨幣對</h2></div><span class="heading-glyph" aria-hidden="true">✳</span></div>
+        <div id="pairList" class="pair-list" role="listbox" aria-label="選擇貨幣對"></div>
+        <div class="market-note"><span aria-hidden="true">✦</span><span>價格上升時做多獲利，下降時做空獲利。</span></div>
+      </aside>
+
+      <section class="center-column">
+        <div class="panel chart-panel">
+          <div class="chart-topline">
+            <div>
+              <span class="section-kicker">PRICE CHART</span>
+              <div class="pair-title"><h1 id="pairTitle">EUR / USD</h1><span class="mode-badge">模擬行情</span></div>
+              <div class="pair-sub" id="pairName">歐元 / 美元</div>
+            </div>
+            <div class="quote-block"><strong id="currentPrice">-</strong><span id="priceChange">+0.00%</span></div>
+          </div>
+          <div class="chart-controls">
+            <div class="segmented" role="group" aria-label="圖表選項">
+              <button id="maBtn" type="button" class="active">均線</button>
+              <button id="newsMarkBtn" type="button" class="active">新聞標記</button>
+              <button id="posLineBtn" type="button" class="active">持倉線</button>
+            </div>
+            <div class="playback-controls"><span id="dataStatus">每 1.5 秒更新</span><button id="pauseBtn" class="outline-button" type="button">暫停</button></div>
+          </div>
+          <div class="chart-wrap"><canvas id="chart" aria-label="匯率價格走勢圖"></canvas></div>
+          <div id="newsTicker" class="news-ticker">
+            <span class="ticker-tag" id="tickerTag">快訊</span>
+            <div class="ticker-body"><span class="ticker-track flat" id="tickerTrack">等待市場消息…</span></div>
+            <button id="newsCenterBtn" class="text-button ticker-more" type="button">新聞中心</button>
+          </div>
+          <div class="chart-foot">
+            <span><i class="legend-line"></i>模擬數據 · 模擬 K 線，僅供遊戲使用</span>
+            <span class="legend-keys"><i class="k-ma10"></i>MA10 <i class="k-ma30"></i>MA30 <i class="k-entry"></i>進場 <i class="k-liq"></i>強平</span>
+          </div>
+        </div>
+
+        <div class="panel positions-panel">
+          <div class="panel-heading row-heading"><div><span class="section-kicker">OPEN POSITIONS</span><h2>持倉 <span id="positionCount" class="count-pill">0</span></h2></div><span id="riskHint" class="quiet-note">暫無持倉</span></div>
+          <div id="positions" class="positions-list"></div>
+        </div>
+
+        <div class="panel equity-panel">
+          <div class="panel-heading row-heading"><div><span class="section-kicker">EQUITY CURVE</span><h2>淨值曲線</h2></div><span id="equityNote" class="quiet-note">本次瀏覽</span></div>
+          <div class="equity-wrap"><canvas id="equityChart" aria-label="淨值曲線"></canvas></div>
+        </div>
+
+        <div class="panel history-panel">
+          <div class="panel-heading row-heading"><div><span class="section-kicker">TRADE LOG</span><h2>最近結算</h2></div><button id="historyToggle" class="text-button" type="button">展開紀錄</button></div>
+          <div id="history" class="history-list hidden"></div>
+        </div>
+      </section>
+
+      <aside class="right-column">
+        <section class="panel order-panel">
+          <div class="panel-heading"><div><span class="section-kicker">NEW ORDER</span><h2>開一筆交易</h2></div><span class="order-decoration" aria-hidden="true">✿</span></div>
+          <div class="order-pair"><span>交易貨幣對</span><strong id="orderPair">EUR / USD</strong></div>
+          <div class="compact-fields">
+            <div>
+              <label class="field-label" for="marginInput">投入保證金 <span>USD</span></label>
+              <div class="input-shell"><span>$</span><input id="marginInput" type="number" min="10" step="10" value="500" inputmode="decimal"><button id="maxBtn" type="button">MAX</button></div>
+            </div>
+            <div>
+              <div class="range-label"><label for="leverageRange">槓桿倍數</label><strong id="leverageValue">5×</strong></div>
+              <input id="leverageRange" type="range" min="1" max="10" step="1" value="5">
+              <div class="range-ticks"><span>1×</span><span>3×</span><span>5×</span><span>7×</span><span>10×</span></div>
+            </div>
+          </div>
+          <div class="order-preview">
+            <div><span>名目倉位</span><strong id="notional">$0.00</strong></div>
+            <div><span>開倉手續費</span><strong id="tradeFee">$0.00</strong></div>
+            <div><span>約可承受反向波動</span><strong id="riskPercent">0.00%</strong></div>
+            <div><span>強平價（多 / 空）</span><strong id="liqPreview">-</strong></div>
+          </div>
+          <div class="trade-buttons">
+            <button id="longBtn" type="button" class="trade-button long"><span>↗</span> 做多 / 買入</button>
+            <button id="shortBtn" type="button" class="trade-button short"><span>↘</span> 做空 / 賣出</button>
+          </div>
+          <p class="order-note">槓桿越高，開倉手續費越高。行情跳空可能穿過強平線，帳戶淨值可能變成負數；淨值 ≤ 0 時會凍結開倉。</p>
+        </section>
+        <div class="side-disclaimer">這是遊戲，不提供真實交易。行情為虛構模擬，不是即時報價。介面參考 bilibili 小遊戲「FX 简单!」重新製作。</div>
+      </aside>
+    </div>
+  </main>
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<div id="newsFloat" class="news-float" role="status">
+  <button id="newsFloatClose" class="nf-close" aria-label="關閉快訊" type="button">×</button>
+  <span class="nf-tag" id="nfTag">快訊</span>
+  <h4 id="nfTitle"></h4>
+  <p id="nfBody"></p>
+</div>
+
+<div id="newsCenter" class="modal-backdrop hidden" role="presentation">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="newsCenterTitle">
+    <button id="newsCenterClose" class="modal-x" aria-label="關閉新聞中心" type="button">×</button>
+    <div class="modal-icon">✦</div>
+    <h2 id="newsCenterTitle">新聞中心</h2>
+    <p>本次瀏覽收到的全部市場快訊。約四分之一的新聞，市場會走出相反方向。</p>
+    <div id="newsCenterList" class="news-center-list"></div>
+    <div class="modal-actions"><button id="newsCenterOk" class="primary-button" type="button">關閉</button></div>
   </div>
-  <div id="orderInfo" class="info"></div>
-  <div id="orderMsg" class="msg"></div>
-</section>
+</div>
 
-<section id="positions">
-  <h2>持倉</h2>
-  <div class="table-wrap">
-  <table id="posTable"><thead><tr><th>貨幣對</th><th>方向</th><th>名目</th><th>槓桿</th><th>進場</th><th>現價</th><th>強平</th><th>損益</th><th></th></tr></thead><tbody></tbody></table>
+<div id="confirmModal" class="modal-backdrop hidden" role="presentation">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+    <div class="modal-icon">♡</div>
+    <h2 id="confirmTitle">重新開始？</h2>
+    <p>帳戶會回到 $10,000，所有持倉與紀錄都會清除。</p>
+    <div class="modal-actions"><button id="confirmCancel" class="outline-button" type="button">取消</button><button id="confirmOk" class="primary-button" type="button">重新開始</button></div>
   </div>
-  <p id="noPos" class="empty">目前沒有持倉</p>
-</section>
-
-<section id="equityBox">
-  <h2>淨值曲線</h2>
-  <canvas id="equityChart"></canvas>
-</section>
-
-<section id="history">
-  <h2>最近成交</h2>
-  <ul id="histList"><li class="empty">還沒有成交紀錄</li></ul>
-</section>
-
-<dialog id="menu">
-  <h3>選單</h3>
-  <p class="warn">本機存檔只存在這個瀏覽器，可被任意修改，<b>不是可信成績</b>。</p>
-  <button id="resetBtn" class="danger">重置帳戶</button>
-  <button id="exportBtn" class="ghost">匯出存檔 (JSON)</button>
-  <button id="pauseBtn" class="ghost">暫停/繼續</button>
-  <form method="dialog"><button class="ghost">關閉</button></form>
-  <textarea id="exportArea" class="hidden" readonly rows="8"></textarea>
-</dialog>
+</div>
 
 <script type="module" src="app.mjs"></script>
 </body>

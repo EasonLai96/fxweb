@@ -1,205 +1,273 @@
 import * as E from "./engine.mjs";
-import { createMarket } from "./market.mjs";
+import { createMarket, PAIR_NAMES } from "./market.mjs";
 import * as Store from "./store.mjs";
 import { drawCandles, drawSpark, drawEquity } from "./charts.mjs";
 
+const THEME_KEY = "fxweb.theme";
 const market = createMarket(Date.now() & 0x7fffffff);
 let state = Store.load() || E.createAccount(10000);
-let paused = false;
-let activePair = market.pairs()[0];
+// 舊存檔可能有不在目前清單裡的貨幣對：沒有報價就無法結算，直接移除並退回保證金（不計損益）。
+state.positions = state.positions.filter(p => market.get(p.pair) != null);
+
+const ui = { pair: market.pairs()[0], margin: 500, leverage: 5, paused: false, showMA: true, showNews: true, showPos: true, historyOpen: false };
 const equityPts = [];
-const EQUITY_MAX = 400;
+let newsTimer = 0, toastTimer = 0, lastNewsStep = -1;
 
-const $ = (id) => document.getElementById(id);
-const fmt = (n, d = 2) => Number(n).toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
-const digits = (p) => (p.includes("JPY") ? 3 : 4);
-const dirCls = (v) => (v > 0 ? "up" : v < 0 ? "down" : "");
-const pct = (v) => `${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`;
-const esc = (s) => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const $ = id => document.getElementById(id);
+const digits = p => (p.includes("JPY") ? 3 : 4);
+const money = v => (v < 0 ? "-$" : "$") + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const signedMoney = v => (v >= 0 ? "+" : "-") + "$" + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const pct = v => `${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`;
+const signCls = v => (v > 0 ? "positive" : v < 0 ? "negative" : "");
+const spaced = p => p.replace("/", " / ");
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const theme = () => document.documentElement.dataset.theme || "day";
 
-function sessionChange(p) {
+function change(p) {
   const cs = market.candles(p);
-  if (!cs.length) return 0;
-  return cs[cs.length - 1].c / cs[0].o - 1;
+  const ref = cs[Math.max(0, cs.length - 40)];
+  return cs[cs.length - 1].c / ref.o - 1;
 }
 
-function buildQuotes() {
-  $("quotes").innerHTML = market.pairs().map(p => `
-    <div class="qcard" data-pair="${p}">
-      <span class="qp">${p}</span>
-      <span class="price" data-q="price"></span>
-      <span class="chg" data-q="chg"></span>
-      <canvas data-q="spark"></canvas>
-    </div>`).join("");
-  $("quotes").querySelectorAll(".qcard").forEach(el => el.onclick = () => selectPair(el.dataset.pair));
-  $("pair").innerHTML = market.pairs().map(p => `<option>${p}</option>`).join("");
-  $("pair").onchange = () => selectPair($("pair").value);
+function toast(msg, bad = false) {
+  const t = $("toast");
+  t.textContent = msg; t.className = "toast show" + (bad ? " bad" : "");
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.className = "toast" + (bad ? " bad" : ""); }, 2600);
 }
 
-function selectPair(p) {
-  activePair = p;
-  $("pair").value = p;
-  renderAll();
-}
-
-function renderQuotes() {
-  document.querySelectorAll(".qcard").forEach(el => {
-    const p = el.dataset.pair;
-    const cs = market.candles(p);
-    const last = cs[cs.length - 1];
-    const chg = sessionChange(p);
-    el.classList.toggle("active", p === activePair);
-    const pe = el.querySelector('[data-q="price"]');
-    pe.textContent = fmt(last.c, digits(p));
-    pe.className = "price " + dirCls(last.c - last.o);
-    const ce = el.querySelector('[data-q="chg"]');
-    ce.textContent = pct(chg);
-    ce.className = "chg " + dirCls(chg);
-    drawSpark(el.querySelector('[data-q="spark"]'), cs.slice(-60).map(c => c.c));
+/* ---------- 左欄：貨幣對 ---------- */
+function renderPairs() {
+  const list = $("pairList");
+  if (!list.dataset.built) {
+    list.innerHTML = market.pairs().map(p => `
+      <button type="button" class="pair-row" role="option" data-pair="${p}">
+        <span><strong>${p}</strong><small>${PAIR_NAMES[p]}</small></span>
+        <span class="pair-numbers"><strong data-f="price"></strong><small data-f="chg"></small></span>
+        <canvas data-spark="${p}" aria-hidden="true"></canvas>
+      </button>`).join("");
+    list.dataset.built = "1";
+    list.onclick = e => { const b = e.target.closest("[data-pair]"); if (b) selectPair(b.dataset.pair); };
+  }
+  const up = cssVar("--up"), down = cssVar("--down");
+  list.querySelectorAll(".pair-row").forEach(row => {
+    const p = row.dataset.pair, ch = change(p);
+    row.classList.toggle("selected", p === ui.pair);
+    row.setAttribute("aria-selected", String(p === ui.pair));
+    row.querySelector('[data-f="price"]').textContent = market.get(p).toFixed(digits(p));
+    const c = row.querySelector('[data-f="chg"]');
+    c.textContent = pct(ch); c.className = signCls(ch);
+    drawSpark(row.querySelector("canvas"), market.candles(p).slice(-40).map(k => k.c), ch >= 0 ? up : down);
   });
 }
 
-function renderChart() {
-  const p = activePair, d = digits(p);
-  const cs = market.candles(p);
-  const last = cs[cs.length - 1];
-  $("chartPair").textContent = p;
-  $("chartPrice").textContent = fmt(last.c, d);
-  $("chartPrice").className = "price " + dirCls(last.c - last.o);
-  const chg = sessionChange(p);
-  $("chartChg").textContent = pct(chg);
-  $("chartChg").className = "chg " + dirCls(chg);
+function selectPair(p) { ui.pair = p; renderAll(); }
 
-  const lines = [];
-  for (const pos of state.positions.filter(x => x.pair === p)) {
-    lines.push({ price: pos.entry, color: "#7aa7ff", label: `#${pos.id} ${pos.side > 0 ? "多" : "空"} 進場` });
-    lines.push({ price: E.liquidationPrice(pos), color: "#ff9f43", label: `#${pos.id} 強平` });
-  }
-  const marks = market.news().filter(n => n.pair === p).map(n => ({ t: n.step, reversed: n.reversed }));
-  drawCandles($("kline"), cs, { digits: d, lines, marks });
-}
-
+/* ---------- 帳戶 ---------- */
 function renderAccount(prices) {
   const m = E.metrics(state, prices);
+  const floating = m.equity - state.cash;
   const ret = m.equity / state.startingCash - 1;
-  $("equity").textContent = fmt(m.equity);
-  $("equity").className = dirCls(ret);
-  $("retPct").textContent = pct(ret);
-  $("retPct").className = dirCls(ret);
-  $("cash").textContent = fmt(m.cash);
-  $("used").textContent = fmt(m.usedMargin);
-  $("free").textContent = fmt(m.freeMargin);
-  const usage = m.equity > 0 ? m.usedMargin / m.equity : 1;
+  $("equity").textContent = money(m.equity);
+  $("retPct").textContent = pct(ret); $("retPct").className = signCls(ret);
+  $("free").textContent = money(m.freeMargin);
+  $("floating").textContent = signedMoney(floating); $("floating").className = signCls(floating);
+  $("usedMargin").textContent = money(m.usedMargin);
+  const usage = m.equity > 0 ? m.usedMargin / m.equity : (m.usedMargin > 0 ? 1 : 0);
   $("usage").textContent = (usage * 100).toFixed(1) + "%";
   const bar = $("meterBar");
   bar.style.width = Math.min(100, usage * 100) + "%";
   bar.className = usage >= 0.8 ? "danger" : usage >= 0.5 ? "warn" : "";
-  $("frozen").classList.toggle("hidden", !m.frozen);
+  return m;
 }
 
+/* ---------- 圖表 ---------- */
+function renderChart() {
+  const p = ui.pair, cs = market.candles(p), last = cs[cs.length - 1], ch = change(p);
+  $("pairTitle").textContent = spaced(p);
+  $("pairName").textContent = PAIR_NAMES[p];
+  $("currentPrice").textContent = last.c.toFixed(digits(p));
+  $("currentPrice").className = signCls(last.c - last.o);
+  $("priceChange").textContent = pct(ch); $("priceChange").className = signCls(ch);
+
+  const lines = [];
+  if (ui.showPos) for (const pos of state.positions.filter(x => x.pair === p)) {
+    lines.push({ price: pos.entry, kind: "entry", label: `#${pos.id} ${pos.side > 0 ? "多" : "空"} 進場` });
+    lines.push({ price: E.liquidationPrice(pos), kind: "liq", label: `#${pos.id} 強平` });
+  }
+  const step = market.step();
+  const marks = ui.showNews ? market.news().filter(n => n.pair === p).map(n => ({ t: n.step, reversed: step - n.step >= 8 && n.reversed })) : [];
+  drawCandles($("chart"), cs, { theme: theme(), digits: digits(p), lines, marks, showMA: ui.showMA });
+}
+
+/* ---------- 下單 ---------- */
+function renderOrder(prices, m) {
+  const p = ui.pair, price = prices[p], lev = ui.leverage, margin = ui.margin;
+  const notional = margin * lev;
+  $("orderPair").textContent = spaced(p);
+  $("leverageValue").textContent = lev + "×";
+  $("leverageRange").value = lev;
+  $("leverageRange").style.setProperty("--progress", `${(lev - 1) / (E.MAX_LEVERAGE - 1) * 100}%`);
+  $("notional").textContent = money(notional);
+  $("tradeFee").textContent = money(E.feeFor(notional, lev));
+  $("riskPercent").textContent = (E.LIQ_LOSS / lev * 100).toFixed(2) + "%";
+  const fake = side => E.liquidationPrice({ pair: p, side, leverage: lev, entry: price });
+  $("liqPreview").textContent = `${fake(1).toFixed(digits(p))} / ${fake(-1).toFixed(digits(p))}`;
+  const frozen = m.frozen;
+  $("longBtn").disabled = frozen; $("shortBtn").disabled = frozen;
+}
+
+function maxMargin(prices) {
+  const lev = ui.leverage, free = E.freeMargin(state, prices);
+  const perMargin = 1 + lev * (0.00005 + lev * 0.000005); // 保證金 + 手續費 占用
+  return Math.max(0, Math.floor(free / perMargin * 100) / 100);
+}
+
+function order(side) {
+  const prices = market.prices();
+  const margin = Number($("marginInput").value);
+  if (!(margin >= 10)) { toast("保證金至少 $10", true); return; }
+  ui.margin = margin;
+  const r = E.openPosition(state, prices, { pair: ui.pair, side, leverage: ui.leverage, notional: margin * ui.leverage, time: Date.now() });
+  if (!r.ok) { toast(r.error, true); return; }
+  toast(`已${side > 0 ? "做多" : "做空"} ${ui.pair}・名目 ${money(r.position.notional)}・手續費 ${money(r.position.feePaid)}`);
+  afterChange();
+}
+
+/* ---------- 持倉 ---------- */
 function renderPositions(prices) {
-  const tb = $("posTable").querySelector("tbody");
-  $("noPos").classList.toggle("hidden", state.positions.length > 0);
-  tb.innerHTML = state.positions.map(p => {
-    const price = prices[p.pair];
-    const pnl = E.unrealizedPnl(p, price);
-    const d = digits(p.pair);
-    const lp = E.lossPct(p, price);
-    return `<tr class="${lp >= E.WARN_LOSS ? "warnrow" : ""}">
-      <td>${p.pair}</td><td class="${p.side > 0 ? "up" : "down"}">${p.side > 0 ? "多" : "空"}</td>
-      <td>${fmt(p.notional, 0)}</td><td>${p.leverage}x</td>
-      <td>${fmt(p.entry, d)}</td><td>${fmt(price, d)}</td>
-      <td>${fmt(E.liquidationPrice(p), d)}</td>
-      <td class="${dirCls(pnl)}">${fmt(pnl)}</td>
-      <td><button data-close="${p.id}" data-pair="${p.pair}">平倉</button></td>
-    </tr>`;
+  const root = $("positions");
+  $("positionCount").textContent = state.positions.length;
+  $("riskHint").textContent = state.positions.length ? `合計 ${money(E.usedMargin(state))} 保證金` : "暫無持倉";
+  if (!state.positions.length) {
+    root.innerHTML = '<div class="empty-state"><div class="empty-icon">♡</div>還沒有持倉，選一個貨幣對開始吧</div>';
+    return;
+  }
+  root.innerHTML = state.positions.map(pos => {
+    const price = prices[pos.pair], pnl = E.unrealizedPnl(pos, price), d = digits(pos.pair);
+    const risk = E.lossPct(pos, price), riskW = Math.min(100, risk / E.LIQ_LOSS * 100);
+    const riskColor = risk >= E.WARN_LOSS ? cssVar("--down") : risk >= 0.3 ? "#e9a35a" : cssVar("--accent");
+    return `<div class="position-row${risk >= E.WARN_LOSS ? " risky" : ""}">
+      <div class="pos-name"><strong>${pos.pair}<span class="direction ${pos.side > 0 ? "long" : "short"}">${pos.side > 0 ? "做多" : "做空"}</span>${risk >= E.WARN_LOSS ? '<span class="risk-tag">風險偏高</span>' : ""}</strong>
+        <small>${money(pos.margin)} 保證金・${pos.leverage}×・${money(pos.notional)} 倉位</small></div>
+      <div class="pos-cell pos-entry"><small>進場價</small><strong>${pos.entry.toFixed(d)}</strong></div>
+      <div class="pos-cell"><small>現價</small><strong>${price.toFixed(d)}</strong></div>
+      <div class="pos-cell pos-liq"><small>強平價</small><strong>${E.liquidationPrice(pos).toFixed(d)}</strong></div>
+      <div class="pos-cell"><small>浮動盈虧</small><strong class="${signCls(pnl)}">${signedMoney(pnl)}</strong>
+        <div class="risk-bar" title="距離強平"><i style="width:${riskW}%;background:${riskColor}"></i></div></div>
+      <button class="close-btn" type="button" data-close="${pos.id}" data-pair="${pos.pair}">平倉</button>
+    </div>`;
   }).join("");
-  tb.querySelectorAll("button[data-close]").forEach(b =>
-    b.onclick = () => { E.closePosition(state, Number(b.dataset.close), market.get(b.dataset.pair), Date.now()); afterChange(); });
 }
 
-function renderNews() {
-  const list = market.news().slice().reverse().slice(0, 12);
-  if (!list.length) return;
-  $("newsList").innerHTML = list.map((n, i) => `
-    <li class="${i === 0 && n.step === market.step() ? "news-new" : ""}">
-      <span class="tag">${n.pair}</span>
-      <span>${esc(n.text)} <span class="${n.claimed > 0 ? "up" : "down"}">${n.claimed > 0 ? "利多" : "利空"}</span></span>
-      ${n.reversed ? '<span class="tag rev">市場反向</span>' : ""}
-    </li>`).join("");
+/* ---------- 淨值、紀錄、新聞 ---------- */
+function renderEquity() {
+  drawEquity($("equityChart"), equityPts, state.startingCash, { up: cssVar("--up"), down: cssVar("--down"), muted: cssVar("--text-muted"), text: cssVar("--text-deep") });
 }
 
 function renderHistory() {
-  const closes = state.log.filter(l => l.type === "close").slice(-10).reverse();
-  if (!closes.length) { $("histList").innerHTML = '<li class="empty">還沒有成交紀錄</li>'; return; }
-  const reason = { manual: "手動平倉", liquidated: "強制平倉" };
-  $("histList").innerHTML = closes.map(l => `
-    <li><span class="tag ${l.reason === "liquidated" ? "rev" : ""}">${reason[l.reason] || l.reason}</span>
-    <span>#${l.id} ${l.pair} @ ${fmt(l.price, digits(l.pair))}</span>
-    <b class="${dirCls(l.pnl)}" style="margin-left:auto">${fmt(l.pnl)}</b></li>`).join("");
+  $("historyToggle").textContent = ui.historyOpen ? "收起紀錄" : "展開紀錄";
+  $("history").classList.toggle("hidden", !ui.historyOpen);
+  if (!ui.historyOpen) return;
+  const closes = state.log.filter(l => l.type === "close").slice(-15).reverse();
+  $("history").innerHTML = closes.length ? closes.map(l => `
+    <div class="history-row"><span>${l.reason === "liquidated" ? '<b class="liq-tag">強平</b>' : ""}#${l.id} ${l.pair} @ ${l.price.toFixed(digits(l.pair))}</span>
+    <strong class="${signCls(l.pnl)}">${signedMoney(l.pnl)}</strong></div>`).join("")
+    : '<div class="empty-state">還沒有結算紀錄</div>';
 }
 
-function renderOrderInfo(prices) {
-  const notional = Number($("notional").value) || 0;
-  const lev = Number($("lev").value);
-  const price = prices[$("pair").value];
-  const margin = notional / lev, fee = E.feeFor(notional, lev);
-  const longLiq = price * (1 - E.LIQ_LOSS / lev), shortLiq = price * (1 + E.LIQ_LOSS / lev);
-  const d = digits($("pair").value);
-  $("orderInfo").textContent = `保證金 ${fmt(margin)}・手續費 ${fmt(fee)}・強平價 多 ${fmt(longLiq, d)} / 空 ${fmt(shortLiq, d)}`;
+function showNews(n) {
+  const bull = n.claimed > 0;
+  $("tickerTag").textContent = `${n.pair} ${bull ? "利多" : "利空"}`;
+  $("tickerTag").className = "ticker-tag" + (bull ? "" : " bear");
+  const track = $("tickerTrack");
+  track.textContent = `${n.text}　——　${n.pair} 可能${bull ? "走高" : "走低"}，但市場不一定照劇本走。`;
+  track.className = "ticker-track";
+  $("nfTag").textContent = `${n.pair}・${bull ? "利多" : "利空"}`;
+  $("nfTag").className = "nf-tag" + (bull ? "" : " bear");
+  $("nfTitle").textContent = n.text;
+  $("nfBody").textContent = `新聞通常推動 ${n.pair} ${bull ? "上漲" : "下跌"}，但約四分之一的情況市場會反向。點左側貨幣對可查看走勢。`;
+  $("newsFloat").classList.add("show");
+  clearTimeout(newsTimer); newsTimer = setTimeout(() => $("newsFloat").classList.remove("show"), 5200);
 }
 
+function renderNewsCenter() {
+  const step = market.step();
+  const list = market.news().slice().reverse();
+  $("newsCenterList").innerHTML = list.length ? list.map(n => {
+    const bull = n.claimed > 0, settled = step - n.step >= 8;
+    return `<div class="news-item"><span class="nf-tag${bull ? "" : " bear"}">${n.pair}・${bull ? "利多" : "利空"}</span>${settled && n.reversed ? '<span class="rev-tag">市場反向</span>' : ""}
+      <h4>${esc(n.text)}</h4><small>${settled ? (n.reversed ? "結果：市場走出相反方向" : "結果：市場照新聞方向走") : "行情發酵中…"}・${step - n.step} 根 K 線前</small></div>`;
+  }).join("") : '<div class="empty-state"><div class="empty-icon">✦</div>還沒有新聞，稍等一下</div>';
+}
+
+/* ---------- 主流程 ---------- */
 function renderAll() {
   const prices = market.prices();
-  renderQuotes();
+  renderPairs();
+  const m = renderAccount(prices);
   renderChart();
-  renderAccount(prices);
+  renderOrder(prices, m);
   renderPositions(prices);
-  renderOrderInfo(prices);
-  renderNews();
+  renderEquity();
   renderHistory();
-  drawEquity($("equityChart"), equityPts, state.startingCash);
 }
 
-function afterChange() { Store.save(state); renderAll(); }
-
-function order(side) {
-  const pair = $("pair").value;
-  const notional = Number($("notional").value);
-  const leverage = Number($("lev").value);
-  const r = E.openPosition(state, market.prices(), { pair, side, leverage, notional, time: Date.now() });
-  const msg = $("orderMsg");
-  if (!r.ok) { msg.textContent = r.error; msg.classList.add("err"); }
-  else { msg.textContent = `已開${side > 0 ? "多" : "空"} ${pair} ${fmt(notional, 0)} @${leverage}x`; msg.classList.remove("err"); activePair = pair; afterChange(); }
-}
+function afterChange() { Store.save(state); equityPts.push(E.equity(state, market.prices())); renderAll(); }
 
 function loop() {
-  if (paused) return;
-  const { prices } = market.tick();
+  if (ui.paused) return;
+  const { prices, news } = market.tick();
   const events = E.settleTick(state, prices, Date.now());
-  if (events.some(e => e.type === "liquidated")) { const m = $("orderMsg"); m.textContent = "有持倉被強制平倉"; m.classList.add("err"); }
+  for (const ev of events) if (ev.type === "liquidated") toast(`#${ev.id} ${ev.pair} 虧損達保證金 80%，已強制平倉`, true);
+  if (news && news.step !== lastNewsStep) { lastNewsStep = news.step; showNews(news); }
   equityPts.push(E.equity(state, prices));
-  if (equityPts.length > EQUITY_MAX) equityPts.shift();
+  if (equityPts.length > 500) equityPts.shift();
   Store.save(state);
   renderAll();
+  if (!$("newsCenter").classList.contains("hidden")) renderNewsCenter();
 }
 
-$("long").onclick = () => order(1);
-$("short").onclick = () => order(-1);
-$("notional").oninput = () => renderOrderInfo(market.prices());
-$("lev").onchange = () => renderOrderInfo(market.prices());
-$("menuBtn").onclick = () => $("menu").showModal();
-$("colorToggle").onclick = (e) => {
-  document.body.classList.toggle("intl");
-  e.target.textContent = document.body.classList.contains("intl") ? "綠漲紅跌" : "紅漲綠跌";
-  renderAll();
-};
-$("resetBtn").onclick = () => { E.resetAccount(state); Store.clear(); Store.save(state); equityPts.length = 0; $("menu").close(); afterChange(); };
-$("exportBtn").onclick = () => { const a = $("exportArea"); a.classList.remove("hidden"); a.value = Store.exportText(state); a.select(); };
-$("pauseBtn").onclick = () => { paused = !paused; $("pauseBtn").textContent = paused ? "繼續" : "暫停/繼續"; };
-window.addEventListener("resize", renderAll);
+function bind() {
+  $("longBtn").onclick = () => order(1);
+  $("shortBtn").onclick = () => order(-1);
+  $("marginInput").oninput = e => { const v = Number(e.target.value); if (v > 0) { ui.margin = v; renderOrder(market.prices(), E.metrics(state, market.prices())); } };
+  $("leverageRange").oninput = e => { ui.leverage = Number(e.target.value); renderOrder(market.prices(), E.metrics(state, market.prices())); };
+  $("maxBtn").onclick = () => { const v = maxMargin(market.prices()); ui.margin = v; $("marginInput").value = v; renderOrder(market.prices(), E.metrics(state, market.prices())); };
+  $("positions").onclick = e => {
+    const b = e.target.closest("[data-close]"); if (!b) return;
+    const r = E.closePosition(state, Number(b.dataset.close), market.get(b.dataset.pair), Date.now());
+    if (r.ok) toast(`已平倉・${r.pnl >= 0 ? "獲利" : "虧損"} ${signedMoney(r.pnl)}`, r.pnl < 0);
+    afterChange();
+  };
+  const toggle = (id, key) => { $(id).onclick = () => { ui[key] = !ui[key]; $(id).classList.toggle("active", ui[key]); renderChart(); }; };
+  toggle("maBtn", "showMA"); toggle("newsMarkBtn", "showNews"); toggle("posLineBtn", "showPos");
+  $("pauseBtn").onclick = () => { ui.paused = !ui.paused; $("pauseBtn").textContent = ui.paused ? "繼續" : "暫停"; $("dataStatus").textContent = ui.paused ? "已暫停" : "每 1.5 秒更新"; };
+  $("historyToggle").onclick = () => { ui.historyOpen = !ui.historyOpen; renderHistory(); };
+  $("themeBtn").onclick = () => {
+    const next = theme() === "night" ? "day" : "night";
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem(THEME_KEY, next); } catch {}
+    $("themeBtn").textContent = next === "night" ? "白天" : "夜間";
+    renderAll();
+  };
+  const openNews = () => { renderNewsCenter(); $("newsCenter").classList.remove("hidden"); };
+  const closeNews = () => $("newsCenter").classList.add("hidden");
+  $("newsCenterBtn").onclick = openNews; $("newsCenterBtn2").onclick = openNews;
+  $("newsCenterClose").onclick = closeNews; $("newsCenterOk").onclick = closeNews;
+  $("newsFloatClose").onclick = () => $("newsFloat").classList.remove("show");
+  $("resetBtn").onclick = () => $("confirmModal").classList.remove("hidden");
+  $("confirmCancel").onclick = () => $("confirmModal").classList.add("hidden");
+  $("confirmOk").onclick = () => {
+    E.resetAccount(state); Store.clear(); equityPts.length = 0;
+    $("confirmModal").classList.add("hidden"); toast("帳戶已重置為 $10,000"); afterChange();
+  };
+  window.addEventListener("resize", renderAll);
+}
 
-buildQuotes();
+try { const t = localStorage.getItem(THEME_KEY); if (t === "night") { document.documentElement.dataset.theme = "night"; $("themeBtn").textContent = "白天"; } } catch {}
+$("marginInput").value = ui.margin;
+bind();
 equityPts.push(E.equity(state, market.prices()));
 renderAll();
 setInterval(loop, 1500);

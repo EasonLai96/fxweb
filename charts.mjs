@@ -1,15 +1,18 @@
-// 純 Canvas 繪圖，無外部函式庫。顏色從 CSS 變數讀，跟著紅漲綠跌切換。
+// 純 Canvas 繪圖，無外部函式庫。主圖配色沿用原版的深青圖表底色。
 
-function css(name) {
-  return getComputedStyle(document.body).getPropertyValue(name).trim();
-}
+export const CHART_THEMES = {
+  day:   { bg: "#24383c", grid: "#3c5254", vgrid: "#32494b", axis: "#91a9a8", date: "#7f9999", up: "#8fddb1", down: "#f19aa8", dash: "#d5e1b3" },
+  night: { bg: "#0e2023", grid: "#24413c", vgrid: "#1c3436", axis: "#7e9a94", date: "#5f7d78", up: "#8fddb1", down: "#f19aa8", dash: "#c9d8a8" },
+};
+const MA10 = "#f3d27a", MA30 = "#8ec5ff", ENTRY = "#8ec5ff", LIQ = "#f2a76b";
 
 function setup(canvas) {
-  const dpr = window.devicePixelRatio || 1;
-  const w = canvas.clientWidth, h = canvas.clientHeight;
+  const rect = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : { width: canvas.clientWidth, height: canvas.clientHeight };
+  const w = rect.width || canvas.clientWidth, h = rect.height || canvas.clientHeight;
+  if (!w || !h) return null;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
   if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
-    canvas.width = Math.round(w * dpr);
-    canvas.height = Math.round(h * dpr);
+    canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
   }
   const ctx = canvas.getContext("2d");
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -18,8 +21,7 @@ function setup(canvas) {
 }
 
 function sma(candles, n) {
-  const out = [];
-  let sum = 0;
+  const out = []; let sum = 0;
   for (let i = 0; i < candles.length; i++) {
     sum += candles[i].c;
     if (i >= n) sum -= candles[i - n].c;
@@ -28,124 +30,137 @@ function sma(candles, n) {
   return out;
 }
 
-export function drawCandles(canvas, candles, { digits = 4, lines = [], marks = [] } = {}) {
-  const { ctx, w, h } = setup(canvas);
-  if (!candles.length) return;
-  const up = css("--up"), down = css("--down"), grid = css("--line"), mut = css("--mut");
-  const axisW = 58, padT = 10, padB = 18;
-  const plotW = w - axisW, plotH = h - padT - padB;
+export function drawCandles(canvas, all, { theme = "day", digits = 4, lines = [], marks = [], showMA = true } = {}) {
+  const s = setup(canvas); if (!s) return;
+  const { ctx, w, h } = s;
+  const T = CHART_THEMES[theme] || CHART_THEMES.day;
+  ctx.fillStyle = T.bg; ctx.fillRect(0, 0, w, h);
+  const left = 16, right = w - 62, top = 23, bottom = h - 28;
+  const visible = Math.max(30, Math.min(80, Math.floor((right - left) / 8)));
+  const start = Math.max(0, all.length - visible);
+  const candles = all.slice(start);
+  if (candles.length < 2) return;
+  const ma10 = sma(all, 10).slice(start), ma30 = sma(all, 30).slice(start);
 
-  let hi = -Infinity, lo = Infinity;
-  for (const c of candles) { if (c.h > hi) hi = c.h; if (c.l < lo) lo = c.l; }
-  for (const l of lines) { if (l.price > hi) hi = l.price; if (l.price < lo) lo = l.price; }
-  const pad = (hi - lo) * 0.08 || hi * 0.001;
-  hi += pad; lo -= pad;
-  const y = (p) => padT + (hi - p) / (hi - lo) * plotH;
+  const vals = candles.flatMap(c => [c.h, c.l]);
+  let min = Math.min(...vals), max = Math.max(...vals);
+  const pad = Math.max((max - min) * 0.18, min * 0.0006); min -= pad; max += pad;
+  const inRange = lines.filter(l => l.price >= min && l.price <= max);
+  const yOf = v => top + (max - v) / (max - min) * (bottom - top);
 
-  ctx.font = "10px system-ui";
-  ctx.textBaseline = "middle";
-  for (let i = 0; i <= 4; i++) {
-    const p = lo + (hi - lo) * i / 4, yy = y(p);
-    ctx.strokeStyle = grid; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(0, yy); ctx.lineTo(plotW, yy); ctx.stroke();
-    ctx.fillStyle = mut; ctx.fillText(p.toFixed(digits), plotW + 4, yy);
+  ctx.lineWidth = 1; ctx.font = "10px 'DM Mono', monospace"; ctx.textAlign = "left";
+  for (let i = 0; i < 5; i++) {
+    const y = top + i * (bottom - top) / 4;
+    ctx.strokeStyle = T.grid; ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(right, y); ctx.stroke();
+    ctx.fillStyle = T.axis; ctx.fillText((max - i * (max - min) / 4).toFixed(digits), right + 7, y + 3);
+  }
+  ctx.strokeStyle = T.vgrid;
+  for (let i = 0; i < 6; i++) {
+    const x = left + i * (right - left) / 5;
+    ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bottom); ctx.stroke();
   }
 
-  const n = candles.length;
-  const slot = plotW / n;
-  const bw = Math.max(1, slot * 0.65);
-  const xAt = (i) => i * slot + slot / 2;
-
-  candles.forEach((c, i) => {
-    const color = c.c >= c.o ? up : down;
-    const x = xAt(i);
-    ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(x, y(c.h)); ctx.lineTo(x, y(c.l)); ctx.stroke();
-    const top = y(Math.max(c.o, c.c)), bot = y(Math.min(c.o, c.c));
-    ctx.fillRect(x - bw / 2, top, bw, Math.max(1, bot - top));
-  });
-
-  const drawMA = (vals, color) => {
-    ctx.strokeStyle = color; ctx.lineWidth = 1.2; ctx.beginPath();
-    let started = false;
-    vals.forEach((v, i) => {
-      if (v == null) return;
-      if (!started) { ctx.moveTo(xAt(i), y(v)); started = true; } else ctx.lineTo(xAt(i), y(v));
-    });
-    ctx.stroke();
-  };
-  drawMA(sma(candles, 10), "#f5c542");
-  drawMA(sma(candles, 30), "#7aa7ff");
+  const step = (right - left) / candles.length;
+  const xAt = i => left + step * (i + 0.5);
 
   for (const m of marks) {
     const i = candles.findIndex(c => c.t === m.t);
     if (i < 0) continue;
     const x = xAt(i);
-    ctx.fillStyle = m.reversed ? "#ff9f43" : "#c9d6e8";
-    ctx.beginPath(); ctx.moveTo(x, padT + 2); ctx.lineTo(x - 5, padT - 6 + 14); ctx.lineTo(x + 5, padT - 6 + 14); ctx.closePath(); ctx.fill();
-    ctx.strokeStyle = "rgba(201,214,232,0.25)"; ctx.setLineDash([2, 3]);
-    ctx.beginPath(); ctx.moveTo(x, padT + 10); ctx.lineTo(x, padT + plotH); ctx.stroke();
-    ctx.setLineDash([]);
+    ctx.strokeStyle = m.reversed ? "rgba(242,167,107,.45)" : "rgba(213,225,179,.28)";
+    ctx.setLineDash([2, 4]); ctx.beginPath(); ctx.moveTo(x, top + 12); ctx.lineTo(x, bottom); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = m.reversed ? LIQ : T.dash;
+    ctx.beginPath(); ctx.arc(x, top + 6, 4.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = T.bg; ctx.font = "bold 7px sans-serif"; ctx.textAlign = "center";
+    ctx.fillText("N", x, top + 8.5); ctx.textAlign = "left"; ctx.font = "10px 'DM Mono', monospace";
   }
 
-  for (const l of lines) {
-    const yy = y(l.price);
-    ctx.strokeStyle = l.color; ctx.lineWidth = 1; ctx.setLineDash([5, 4]);
-    ctx.beginPath(); ctx.moveTo(0, yy); ctx.lineTo(plotW, yy); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = l.color; ctx.fillText(l.label, 4, yy - 7);
-  }
-
-  const last = candles[n - 1];
-  const ly = y(last.c);
-  const lc = last.c >= last.o ? up : down;
-  ctx.fillStyle = lc;
-  ctx.fillRect(plotW, ly - 8, axisW, 16);
-  ctx.fillStyle = "#fff";
-  ctx.fillText(last.c.toFixed(digits), plotW + 4, ly);
-
-  ctx.fillStyle = mut;
-  ctx.fillText("MA10", 4, h - 8);
-  ctx.fillStyle = "#f5c542"; ctx.fillRect(34, h - 10, 10, 3);
-  ctx.fillStyle = mut;
-  ctx.fillText("MA30", 52, h - 8);
-  ctx.fillStyle = "#7aa7ff"; ctx.fillRect(82, h - 10, 10, 3);
-}
-
-export function drawSpark(canvas, values) {
-  const { ctx, w, h } = setup(canvas);
-  if (values.length < 2) return;
-  const hi = Math.max(...values), lo = Math.min(...values);
-  const rng = hi - lo || 1;
-  const color = values[values.length - 1] >= values[0] ? css("--up") : css("--down");
-  ctx.strokeStyle = color; ctx.lineWidth = 1.4; ctx.beginPath();
-  values.forEach((v, i) => {
-    const x = i / (values.length - 1) * w;
-    const yy = h - 2 - (v - lo) / rng * (h - 4);
-    i ? ctx.lineTo(x, yy) : ctx.moveTo(x, yy);
+  candles.forEach((c, i) => {
+    const x = xAt(i), rising = c.c >= c.o;
+    ctx.strokeStyle = rising ? T.up : T.down; ctx.fillStyle = rising ? T.up : T.down;
+    ctx.lineWidth = 1.3; ctx.beginPath(); ctx.moveTo(x, yOf(c.h)); ctx.lineTo(x, yOf(c.l)); ctx.stroke();
+    const yt = yOf(Math.max(c.o, c.c)), yb = yOf(Math.min(c.o, c.c));
+    const bw = Math.max(3, step * 0.6);
+    ctx.fillRect(x - bw / 2, yt, bw, Math.max(2, yb - yt));
+    const move = c.c / c.o - 1;
+    if (Math.abs(move) >= 0.004) {
+      const y = move > 0 ? Math.min(bottom - 3, yOf(c.l) + 9) : Math.max(top + 3, yOf(c.h) - 9);
+      ctx.beginPath(); ctx.arc(x, y, 2.2, 0, Math.PI * 2); ctx.fill();
+    }
   });
-  ctx.stroke();
+
+  if (showMA) {
+    const drawMA = (arr, color) => {
+      ctx.strokeStyle = color; ctx.lineWidth = 1.4; ctx.beginPath(); let on = false;
+      arr.forEach((v, i) => { if (v == null) return; const x = xAt(i), y = yOf(v); on ? ctx.lineTo(x, y) : ctx.moveTo(x, y); on = true; });
+      ctx.stroke();
+    };
+    drawMA(ma10, MA10); drawMA(ma30, MA30);
+  }
+
+  for (const l of inRange) {
+    const y = yOf(l.price), color = l.kind === "liq" ? LIQ : ENTRY;
+    ctx.strokeStyle = color; ctx.lineWidth = 1.2; ctx.setLineDash([6, 4]);
+    ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(right, y); ctx.stroke(); ctx.setLineDash([]);
+    ctx.font = "bold 10px sans-serif"; const tw = ctx.measureText(l.label).width;
+    ctx.fillStyle = color; ctx.fillRect(left + 2, y - 15, tw + 10, 14);
+    ctx.fillStyle = T.bg; ctx.fillText(l.label, left + 7, y - 4.5);
+    ctx.font = "10px 'DM Mono', monospace";
+  }
+  const offscreen = lines.length - inRange.length;
+  if (offscreen > 0) { ctx.fillStyle = T.date; ctx.fillText(`另有 ${offscreen} 條持倉線在畫面外`, left + 4, top - 8); }
+
+  ctx.fillStyle = T.date;
+  ctx.fillText("← 過去", left, h - 9); ctx.textAlign = "right"; ctx.fillText("現在 →", right, h - 9); ctx.textAlign = "left";
+
+  const last = candles[candles.length - 1], y = yOf(last.c);
+  ctx.setLineDash([4, 5]); ctx.strokeStyle = T.dash; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(right, y); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = last.c >= last.o ? T.up : T.down;
+  ctx.fillRect(right + 2, y - 8, w - right - 4, 16);
+  ctx.fillStyle = T.bg; ctx.font = "bold 10px 'DM Mono', monospace";
+  ctx.fillText(last.c.toFixed(digits), right + 6, y + 3.5);
 }
 
-export function drawEquity(canvas, points, start) {
-  const { ctx, w, h } = setup(canvas);
-  if (points.length < 2) {
-    ctx.fillStyle = css("--mut"); ctx.font = "12px system-ui"; ctx.textAlign = "center";
-    ctx.fillText("交易一段時間後會出現淨值曲線", w / 2, h / 2); ctx.textAlign = "start";
-    return;
-  }
-  let hi = Math.max(start, ...points), lo = Math.min(start, ...points);
-  const pad = (hi - lo) * 0.1 || 1; hi += pad; lo -= pad;
-  const y = (v) => 6 + (hi - v) / (hi - lo) * (h - 12);
-  const last = points[points.length - 1];
-  const color = last >= start ? css("--up") : css("--down");
-
-  ctx.strokeStyle = css("--mut"); ctx.setLineDash([3, 4]); ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(0, y(start)); ctx.lineTo(w, y(start)); ctx.stroke(); ctx.setLineDash([]);
-
-  ctx.beginPath();
-  points.forEach((v, i) => { const x = i / (points.length - 1) * w; i ? ctx.lineTo(x, y(v)) : ctx.moveTo(x, y(v)); });
-  ctx.strokeStyle = color; ctx.lineWidth = 1.6; ctx.stroke();
+export function drawSpark(canvas, values, color) {
+  const s = setup(canvas); if (!s || values.length < 2) return;
+  const { ctx, w, h } = s;
+  const hi = Math.max(...values), lo = Math.min(...values), r = hi - lo || 1;
+  const pts = values.map((v, i) => [i / (values.length - 1) * w, h - 3 - (v - lo) / r * (h - 6)]);
+  ctx.beginPath(); pts.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+  ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.lineJoin = "round"; ctx.stroke();
   ctx.lineTo(w, h); ctx.lineTo(0, h); ctx.closePath();
-  ctx.globalAlpha = 0.12; ctx.fillStyle = color; ctx.fill(); ctx.globalAlpha = 1;
+  const g = ctx.createLinearGradient(0, 0, 0, h); g.addColorStop(0, color + "40"); g.addColorStop(1, color + "00");
+  ctx.fillStyle = g; ctx.fill();
+}
+
+export function drawEquity(canvas, points, startValue, { up, down, muted, text }) {
+  const s = setup(canvas); if (!s) return;
+  const { ctx, w, h } = s;
+  if (points.length < 2) {
+    ctx.fillStyle = muted; ctx.font = "bold 12px sans-serif"; ctx.textAlign = "center";
+    ctx.fillText("交易一段時間後會出現淨值曲線", w / 2, h / 2 + 4); ctx.textAlign = "left"; return;
+  }
+  const padL = 12, padR = 70, padT = 14, padB = 14;
+  let hi = Math.max(startValue, ...points), lo = Math.min(startValue, ...points);
+  const pad = Math.max((hi - lo) * 0.15, startValue * 0.002); hi += pad; lo -= pad;
+  const yOf = v => padT + (hi - v) / (hi - lo) * (h - padT - padB);
+  const xOf = i => padL + i / (points.length - 1) * (w - padL - padR);
+  const last = points[points.length - 1], color = last >= startValue ? up : down;
+
+  ctx.strokeStyle = muted; ctx.globalAlpha = 0.6; ctx.setLineDash([3, 4]); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(padL, yOf(startValue)); ctx.lineTo(w - padR, yOf(startValue)); ctx.stroke();
+  ctx.setLineDash([]); ctx.globalAlpha = 1;
+  ctx.fillStyle = muted; ctx.font = "10px 'DM Mono', monospace"; ctx.fillText("起始 " + Math.round(startValue).toLocaleString("en-US"), w - padR + 6, yOf(startValue) + 3);
+
+  ctx.beginPath(); points.forEach((v, i) => i ? ctx.lineTo(xOf(i), yOf(v)) : ctx.moveTo(xOf(i), yOf(v)));
+  ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineJoin = "round"; ctx.stroke();
+  ctx.lineTo(xOf(points.length - 1), h); ctx.lineTo(padL, h); ctx.closePath();
+  const g = ctx.createLinearGradient(0, 0, 0, h); g.addColorStop(0, color + "38"); g.addColorStop(1, color + "00");
+  ctx.fillStyle = g; ctx.fill();
+
+  const lx = xOf(points.length - 1), ly = yOf(last);
+  ctx.fillStyle = color; ctx.beginPath(); ctx.arc(lx, ly, 3.5, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = text; ctx.font = "bold 11px 'DM Mono', monospace";
+  ctx.fillText(Math.round(last).toLocaleString("en-US"), lx + 8, ly + 4);
 }

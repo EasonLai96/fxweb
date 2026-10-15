@@ -1,8 +1,10 @@
 // 交易引擎：純邏輯，不碰 DOM / localStorage，方便測試。
-// 帳戶幣別固定 USD。MVP 只交易「計價貨幣為 USD」的貨幣對，損益直接是 USD。
+// 帳戶幣別固定 USD。支援兩種貨幣對：XXX/USD（計價為 USD）與 USD/XXX（基準為 USD）。
 // price(pair) = 1 個 BASE 值多少 QUOTE。prices 是 { pair: number } 的現價表。
+// notional 一律以 USD 計。
 
-export const LEVERAGES = [1, 2, 5, 10];
+export const MAX_LEVERAGE = 10;
+export const LEVERAGES = Array.from({ length: MAX_LEVERAGE }, (_, i) => i + 1);
 export const WARN_LOSS = 0.60;   // 虧損達保證金 60% 警告
 export const LIQ_LOSS = 0.80;    // 虧損達保證金 80% 強制平倉
 const EPS = 1e-9;
@@ -15,8 +17,20 @@ export function feeFor(notional, leverage) {
   return notional * (0.00005 + leverage * 0.000005);
 }
 
+export function isUsdBase(pair) {
+  return pair.startsWith("USD/");
+}
+
+// 持有的 BASE 數量：XXX/USD 為 notional/entry；USD/XXX 的 BASE 就是 USD，等於 notional。
+export function baseUnits(pos) {
+  if (pos.units != null) return pos.units;
+  return isUsdBase(pos.pair) ? pos.notional : pos.notional / pos.entry;
+}
+
+// 損益（USD）。USD/XXX 的損益原本是 QUOTE 幣，用現價換回 USD。
 export function unrealizedPnl(pos, price) {
-  return pos.side * (price - pos.entry) * (pos.notional / pos.entry);
+  const quotePnl = pos.side * (price - pos.entry) * baseUnits(pos);
+  return isUsdBase(pos.pair) ? quotePnl / price : quotePnl;
 }
 
 export function lossPct(pos, price) {
@@ -63,7 +77,8 @@ export function openPosition(state, prices, { pair, side, leverage, notional, ti
   const fee = feeFor(notional, leverage);
   if (freeMargin(state, prices) < margin + fee) return { ok: false, error: "可用保證金不足" };
 
-  const pos = { id: state.nextId++, pair, side, leverage, notional, entry: price, margin, feePaid: fee, openedAt: time };
+  const units = isUsdBase(pair) ? notional : notional / price;
+  const pos = { id: state.nextId++, pair, side, leverage, notional, units, entry: price, margin, feePaid: fee, openedAt: time };
   state.cash -= fee;
   state.positions.push(pos);
   state.log.push({ t: time, type: "open", id: pos.id, pair, side, notional, leverage, price, fee });
@@ -108,9 +123,10 @@ export function resetAccount(state) {
   state.nextId = fresh.nextId;
 }
 
-// 強平價：虧損達保證金 80% 時的價格。
-// pnl = side*(P-entry)*(notional/entry) = -LIQ_LOSS*margin，margin = notional/leverage
-// => P = entry * (1 - side*LIQ_LOSS/leverage)
+// 強平價：虧損達保證金 80% 時的價格，k = LIQ_LOSS / leverage。
+// XXX/USD：side*(P-entry)*(N/entry) = -k*N  => P = entry*(1 - side*k)
+// USD/XXX：side*(P-entry)*N/P      = -k*N  => P = entry/(1 + side*k)
 export function liquidationPrice(pos) {
-  return pos.entry * (1 - pos.side * LIQ_LOSS / pos.leverage);
+  const k = LIQ_LOSS / pos.leverage;
+  return isUsdBase(pos.pair) ? pos.entry / (1 + pos.side * k) : pos.entry * (1 - pos.side * k);
 }
