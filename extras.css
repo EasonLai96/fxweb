@@ -26,6 +26,11 @@
 .fx-extra-tag{font-size:12px;font-weight:800;color:var(--green-text,#4a7c6c)}.fx-extra-achievements progress{display:block;width:100%;height:8px;accent-color:var(--accent-deep,#5fb98a)}
 .fx-extra-check{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px;cursor:pointer}.fx-extra-check input{width:18px;height:18px;flex:none;accent-color:var(--accent-deep,#5fb98a)}
 .fx-extra-preview{margin-top:16px}.fx-extra-preview img{display:block;width:100%;height:auto;border-radius:16px;border:1px solid var(--border,#e1ebe6)}
+.fx-avatar-row{display:flex;align-items:center;gap:16px;padding:12px;margin:12px 0;background:var(--surface-tint,#f4f8f5);border:1px solid var(--border,#e1ebe6);border-radius:14px}
+.fx-avatar-row>div:last-child{flex:1;min-width:0}.fx-avatar-row .fx-extra-actions{margin:8px 0 0}
+.fx-avatar-preview{width:74px;height:74px;border-radius:50%;overflow:hidden;flex:none;background:#a6dac1;color:#173d3a;display:grid;place-items:center;font-weight:900;font-size:25px}
+.fx-avatar-preview img{display:block;width:100%;height:100%;object-fit:cover}.fx-avatar-input{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+@media(max-width:360px){.fx-avatar-preview{width:58px;height:58px}.fx-avatar-row{gap:9px;padding:9px}.fx-avatar-row .fx-extra-button{padding:7px 8px;font-size:12px}}
 .fx-extra-link{display:block;width:100%;min-width:0;padding:12px;border:1px solid var(--border-strong,#d9e8df);border-radius:8px;background:var(--surface,#fff);color:var(--text,#263a3b);font:inherit}
 .fx-extra-step{font:700 12px/1.4 "DM Mono",monospace;color:var(--green-text,#4a7c6c);letter-spacing:.08em;margin-top:0}
 .fx-extra-range-label{display:block;margin:20px 0 8px;font-weight:700}.fx-extra-range{width:100%;height:36px;accent-color:var(--accent-deep,#5fb98a);cursor:pointer}.fx-extra-calculation{display:block;padding:14px;background:var(--tint-green,#e8f5ec);border-radius:12px;line-height:1.8}

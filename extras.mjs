@@ -1,4 +1,11 @@
-import { equity, feeFor } from './engine.mjs';
+import { feeFor } from './engine.mjs';
+import { getAvatar, saveAvatar, removeAvatar, avatarImage } from './avatar.mjs';
+import { drawShareCard } from './share-card.mjs';
+import makeQR from './qr-code.mjs';
+
+const qr = makeQR(0, 'M');
+qr.addData('https://easonlai96.github.io/fxweb/');
+qr.make();
 
 const WELCOME_KEY = 'fxweb.extras.welcome.v1';
 const finite = value => typeof value === 'number' && Number.isFinite(value);
@@ -145,6 +152,44 @@ export function initExtras({ getContext, refresh, onToast = () => {} }) {
     body.replaceChildren(note('先更新帳戶，再產生不含登入憑證的資料卡。圖片只是快照，不是驗證憑證。'));
     const label = el('label', 'fx-extra-check'); const check = el('input'); check.type = 'checkbox'; check.checked = false; check.disabled = c.mode !== 'server';
     label.append(check, document.createTextNode('公開帳號名稱（預設不公開）')); body.append(label);
+    const avatarRow = el('div', 'fx-avatar-row');
+    const avatarPreview = el('div', 'fx-avatar-preview');
+    const avatarDescription = el('div');
+    avatarDescription.append(el('strong', '', '自訂分享頭像'), note('只存在這台裝置。選圖後會裁成正方形並移除原檔附帶資訊；不會傳到伺服器。'));
+    const avatarActions = el('div', 'fx-extra-actions');
+    const upload = button('選擇圖片', () => avatarInput.click());
+    const remove = button('移除頭像', () => {
+      const live = context();
+      if (!removeAvatar(live.mode, live.username)) { onToast('無法存取本機頭像。', true); return; }
+      generation++; releaseImage(); preview.replaceChildren(); output.replaceChildren();
+      avatarPreview.replaceChildren(el('span', '', 'FX'));
+      status.textContent = '已移除本機頭像，請重新產生圖片。';
+      onToast('已移除本機頭像。');
+    });
+    const avatarInput = el('input', 'fx-avatar-input');
+    avatarInput.type = 'file'; avatarInput.accept = 'image/jpeg,image/png,image/webp';
+    avatarInput.setAttribute('aria-label', '選擇分享卡頭像圖片');
+    avatarInput.addEventListener('change', async () => {
+      const file = avatarInput.files?.[0];
+      avatarInput.value = '';
+      if (!file) return;
+      const before = identity(context());
+      try {
+        const data = await saveAvatar(file, context().mode, context().username);
+        if (active !== 'share' || before !== identity(context())) return;
+        const img = el('img'); img.alt = '目前的分享頭像'; img.src = data;
+        avatarPreview.replaceChildren(img);
+        generation++; releaseImage(); preview.replaceChildren(); output.replaceChildren();
+        status.textContent = '頭像已保存在這台裝置；請重新產生圖片。';
+        onToast('頭像已更新，只保存在這台裝置。');
+      } catch (e) { onToast(e.message, true); }
+    });
+    avatarActions.append(upload, remove);
+    avatarDescription.append(avatarActions, avatarInput);
+    avatarRow.append(avatarPreview, avatarDescription); body.append(avatarRow);
+    const prior = getAvatar(c.mode, c.username);
+    if (prior) { const img = el('img'); img.alt = '目前的分享頭像'; img.src = prior; avatarPreview.append(img); }
+    else avatarPreview.append(el('span', '', 'FX'));
     const status = el('p', 'fx-extra-note', '準備產生快照。'); status.setAttribute('role', 'status');
     const preview = el('div', 'fx-extra-preview'); const output = el('div', 'fx-extra-actions');
     const generate = button('更新並產生 PNG', () => generateCard(check.checked, status, preview, output, generate), true);
@@ -170,7 +215,9 @@ export function initExtras({ getContext, refresh, onToast = () => {} }) {
     const stamp = new Date();
     const freshness = navigator.onLine === false ? '離線快照・未確認最新狀態' : c.catchingUp ? '伺服器補算中・未確認最新狀態' : c.mode === 'guest' ? '本機練習快照・非伺服器成績' : confirmed ? '已完成更新請求・僅代表產生時快照' : '更新未確認・使用目前已取得資料';
     try {
-      const canvas = drawCard(c, includeName, stamp, freshness);
+      const avatar = await avatarImage(getAvatar(c.mode, c.username));
+      if (ticket !== generation || active !== 'share' || identity(context()) !== before) return;
+      const canvas = await drawShareCard(c, { includeName, avatar, stamp, freshness, qr });
       const blob = await new Promise((resolve, reject) => canvas.toBlob(b => b ? resolve(b) : reject(new Error('PNG 產生失敗')), 'image/png'));
       if (ticket !== generation || active !== 'share') return;
       shareURL = URL.createObjectURL(blob);
@@ -236,37 +283,4 @@ export function initExtras({ getContext, refresh, onToast = () => {} }) {
   const observer = new MutationObserver(() => { if (dialog.open && otherOverlay()) close(false); });
   observer.observe(document.body, { subtree: true, attributes: true, attributeFilter: ['class', 'hidden', 'open'] });
   return { update };
-}
-
-function drawCard(context, includeName, stamp, freshness) {
-  const canvas = document.createElement('canvas'); canvas.width = 1080; canvas.height = 1120;
-  const ctx = canvas.getContext('2d'); if (!ctx) throw new Error('Canvas unavailable');
-  const bg = ctx.createLinearGradient(0, 0, 1080, 1120); bg.addColorStop(0, '#142e30'); bg.addColorStop(1, '#294b43'); ctx.fillStyle = bg; ctx.fillRect(0, 0, 1080, 1120);
-  ctx.strokeStyle = '#ffffff09'; ctx.lineWidth = 1;
-  for (let x = 0; x < 1080; x += 60) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, 1120); ctx.stroke(); }
-  for (let y = 0; y < 1120; y += 60) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(1080, y); ctx.stroke(); }
-  function text(value, x, y, size = 28, color = '#eaf7ef', weight = '500', max = 936) {
-    ctx.fillStyle = color; ctx.font = `${weight} ${size}px "Noto Sans TC", "Microsoft JhengHei", sans-serif`; ctx.fillText(String(value), x, y, max);
-  }
-  text('FX PRACTICE ROOM', 72, 88, 22, '#a9dfc5', '700');
-  text('槓桿交易練習場', 72, 164, 54, '#f3fff8', '700');
-  text(context.mode === 'server' ? '伺服器帳戶快照' : '訪客練習', 72, 223, 30, '#b7e9d0');
-  text(includeName && context.mode === 'server' ? `帳號：${String(context.username || '').slice(0, 40)}` : '帳號名稱不公開', 72, 273, 24, '#bbcec6');
-  ctx.fillStyle = '#ffffff0b'; ctx.fillRect(60, 310, 960, 202);
-  text('帳戶總權益 · USD', 88, 361, 25, '#bbcec6');
-  let total = null;
-  try { if (context.account) total = equity(context.account, context.prices || {}); } catch { /* absent state */ }
-  text(money(total), 88, 451, 66, '#d1ffe5', '700', 900);
-  const rows = statRows(context);
-  rows.forEach(([label, value], i) => {
-    const x = i % 2 ? 566 : 88, y = 577 + Math.floor(i / 2) * 116;
-    text(label, x, y, 24, '#b7ccc3', '500', 420); text(value, x, y + 48, 36, '#f3fff8', '700', 420);
-  });
-  text(context.mode === 'server' ? '統計：本回合；追蹤前紀錄可能不完整' : '統計：本機保留紀錄；不計成績', 72, 895, 20, '#b7ccc3');
-  ctx.fillStyle = '#a7d9bd'; ctx.fillRect(72, 913, 44, 4);
-  text('圖片非驗證憑證', 72, 965, 30, '#d4f4df', '700');
-  text(`產生日期：${date(stamp)}`, 72, 1008, 22, '#c0d6cb');
-  text(freshness, 72, 1045, 22, '#c0d6cb');
-  text('虛構模擬行情，非即時報價；僅供遊戲，不構成投資建議。', 72, 1085, 21, '#b7ccc3');
-  return canvas;
 }

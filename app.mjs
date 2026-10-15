@@ -521,7 +521,7 @@ bindAuth();
 renderAccountBtn();
 if (Cloud.enabled() && Cloud.user()) switchToServer(); else { enterGuest(); renderAll(); }
 extras = initExtras({
-  getContext: () => ({ mode, username: Cloud.user(), account: state, prices: market.prices(), progress, resets, catchingUp }),
+  getContext: () => ({ mode, username: Cloud.user(), account: state, prices: market.prices(), progress, resets, catchingUp, equityPoints: equityPts.slice() }),
   refresh: async () => {
     if (mode !== "server") return true;
     if (busy) throw new Error("正在處理交易或更新行情，請稍後再試");
