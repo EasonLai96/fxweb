@@ -118,16 +118,50 @@ function renderAccount(prices) {
 
 /* ---------- 周轉小金庫顯示 ---------- */
 function renderBank() {
+  // 舊版快取的 index.html 可能沒有新的金庫元素；缺元素時跳過，不讓整頁 render 中斷。
+  if (!$("bankPanel") || !$("bankHeroValue")) return;
   const owed = E.loanOwed(state);
   const hasLoan = owed > 0;
-  $("loanOwed").textContent = money(owed);
-  $("loanOwedRow").classList.toggle("hidden", !hasLoan);
   const l = state.loan;
-  $("loanRate").textContent = l ? (l.rateDaily * 100).toFixed(2) + "%／天" : "—";
-  const borrowBtn = $("loanBorrowBtn"), repayBtn = $("loanRepayBtn");
-  borrowBtn.disabled = hasLoan;
-  repayBtn.disabled = !hasLoan;
-  borrowBtn.textContent = hasLoan ? "已有借款" : "申請貸款";
+  $("bankPanel").classList.toggle("has-loan", hasLoan);
+  $("bankStatus").textContent = hasLoan ? "借款中" : "無借款";
+  $("bankHeroLabel").textContent = hasLoan ? "目前欠款（本金＋利息）" : "可借額度";
+  $("bankHeroValue").textContent = money(hasLoan ? owed : E.LOAN_MAX);
+  $("bankMeter").style.width = (hasLoan ? Math.min(100, owed / E.LOAN_MAX * 100) : 100) + "%";
+  $("loanOwedRow").classList.toggle("hidden", !hasLoan);
+  if (l) { $("loanPrincipal").textContent = money(l.principal); $("loanOwed").textContent = money(l.accrued); }
+  $("loanRate").textContent = l ? (l.rateDaily * 100).toFixed(2) + "% / 天" : "依金額分級";
+  $("loanBorrowBtn").disabled = hasLoan;
+  $("loanRepayBtn").disabled = !hasLoan;
+  document.querySelectorAll(".bank-tier").forEach(b => { b.disabled = hasLoan; });
+  updateBankPreview();
+}
+
+// 依輸入金額即時顯示：對應利率級距、每天利息；有借款時顯示還款後剩餘。
+function updateBankPreview() {
+  const p = $("bankPreview");
+  if (!p || !$("loanAmount")) return;
+  const raw = $("loanAmount").value, v = Number(raw);
+  const owed = E.loanOwed(state), l = state.loan;
+  let tier = -1;
+  p.classList.remove("bad");
+  if (owed > 0) {
+    const pay = Math.min(v, owed);
+    if (raw === "" || !(v > 0)) p.innerHTML = `不填金額＝全額還清 <b>${money(owed)}</b>`;
+    else if (pay > state.cash + 1e-9) { p.textContent = `現金不足：可用現金 ${money(state.cash)}`; p.classList.add("bad"); }
+    else if (v > owed + 1e-9) { p.innerHTML = `超過欠款，按還款會確認改為全額 <b>${money(owed)}</b>`; p.classList.add("bad"); }
+    else p.innerHTML = v >= owed ? `還款 <b>${money(owed)}</b> 後即還清` : `還款後剩餘欠款 <b>${money(owed - v)}</b>`;
+    tier = E.LOAN_TIERS.findIndex(([, r]) => r === l.rateDaily);
+  } else if (raw === "" || !(v > 0)) {
+    p.textContent = "每 30 秒計一天，利息只算本金、不利滾利。";
+  } else if (v > E.LOAN_MAX) {
+    p.textContent = `超過單筆上限 ${money(E.LOAN_MAX)}`; p.classList.add("bad");
+  } else {
+    const rate = E.loanRate(v);
+    tier = E.LOAN_TIERS.findIndex(([, r]) => r === rate);
+    p.innerHTML = `日息 <b>${(rate * 100).toFixed(2)}%</b>・每天約 <b>${money(v * rate)}</b>・10 天約 <b>${money(v * rate * 10)}</b>`;
+  }
+  document.querySelectorAll(".bank-tier").forEach(b => b.classList.toggle("active", Number(b.dataset.tier) === tier));
 }
 
 /* ---------- 圖表 ---------- */
@@ -220,28 +254,38 @@ async function doBorrow() {
   if (mode === "server") {
     const r = await serverCall(() => Cloud.game.borrow(amount, market.step()));
     const b = r && r.result && r.result.borrowed;
-    if (b) toast(`已借入 ${money(b.amount)}・日息 ${(b.rateDaily * 100).toFixed(2)}%`);
+    if (b) { clearLoanInput(); toast(`已借入 ${money(b.amount)}・日息 ${(b.rateDaily * 100).toFixed(2)}%`); }
     return;
   }
   const r = E.borrow(state, amount, Date.now());
   if (!r.ok) { toast(r.error, true); return; }
+  clearLoanInput();
   toast(`已借入 ${money(r.amount)}・日息 ${(r.rateDaily * 100).toFixed(2)}%`);
   afterChange();
 }
 
+function clearLoanInput() { $("loanAmount").value = ""; updateBankPreview(); }
+
 async function doRepay() {
   const owed = E.loanOwed(state);
   if (!(owed > 0)) { toast("目前沒有借款", true); return; }
-  const field = Number($("loanAmount").value);
-  const amount = field >= 0.01 ? field : owed;   // 不填金額 = 全額還清
+  const raw = $("loanAmount").value.trim();
+  const field = Number(raw);
+  if (raw !== "" && !(field >= 0.01)) { toast("還款金額無效", true); return; }
+  const amount = raw === "" ? owed : field;   // 不填金額 = 全額還清
+  // 輸入比欠款多：不默默改成全額，先確認
+  if (raw !== "" && field > owed + 1e-9 && !confirm(`輸入金額 ${money(field)} 超過欠款，要改為全額還清 ${money(owed)} 嗎？`)) return;
+  const pay = Math.min(amount, owed);
+  if (pay > state.cash + 1e-9) { toast(`現金不足：還款 ${money(pay)}，可用現金 ${money(state.cash)}`, true); return; }
   if (mode === "server") {
-    const r = await serverCall(() => Cloud.game.repay(amount, market.step()));
+    const r = await serverCall(() => Cloud.game.repay(pay, market.step()));
     const p = r && r.result && r.result.repaid;
-    if (p) toast(p.cleared ? `已還清借款・還款 ${money(p.amount)}` : `已還款 ${money(p.amount)}・剩餘欠款 ${money(p.owed)}`);
+    if (p) { clearLoanInput(); toast(p.cleared ? `已還清借款・還款 ${money(p.amount)}` : `已還款 ${money(p.amount)}・剩餘欠款 ${money(p.owed)}`); }
     return;
   }
-  const r = E.repay(state, amount, Date.now());
+  const r = E.repay(state, pay, Date.now());
   if (!r.ok) { toast(r.error, true); return; }
+  clearLoanInput();
   toast(r.cleared ? `已還清借款・還款 ${money(r.amount)}` : `已還款 ${money(r.amount)}・剩餘欠款 ${money(r.owed)}`);
   afterChange();
 }
@@ -456,7 +500,15 @@ function bind() {
   $("confirmOk").onclick = resetAll;
   $("loanBorrowBtn").onclick = doBorrow;
   $("loanRepayBtn").onclick = doRepay;
-  $("loanMaxBtn").onclick = () => { $("loanAmount").value = E.LOAN_MAX; };
+  $("loanMaxBtn").onclick = () => {
+    const owed = E.loanOwed(state);
+    $("loanAmount").value = owed > 0 ? Math.min(owed, Math.floor(state.cash * 100) / 100) : E.LOAN_MAX;
+    updateBankPreview();
+  };
+  $("loanAmount").addEventListener("input", updateBankPreview);
+  document.querySelectorAll(".bank-tier").forEach(b => b.addEventListener("click", () => {
+    $("loanAmount").value = b.dataset.amount; updateBankPreview();
+  }));
   window.addEventListener("resize", renderAll);
 }
 

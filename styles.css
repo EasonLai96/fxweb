@@ -195,23 +195,55 @@ html[data-theme="night"] .primary-button{background:var(--accent);color:#0b2a1e}
 .order-note{margin:15px 2px 0;font-size:11px;line-height:1.6;color:var(--text-muted);font-weight:700}
 .side-disclaimer{font-size:11px;color:var(--text-dim);line-height:1.6;font-weight:700;padding:0 6px}
 
-.bank-panel{padding:22px}
-.bank-panel .panel-heading{padding:0;margin-bottom:14px}
-.bank-intro{margin:0 0 14px;font-size:11px;line-height:1.65;color:var(--text-muted);font-weight:700}
-.bank-stats{display:flex;flex-direction:column;gap:9px;background:var(--surface-tint);border:1px solid var(--border-soft);border-radius:11px;padding:12px 13px;margin-bottom:14px}
-.bank-stat{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--text-muted);font-weight:800}
-.bank-stat strong{font:800 15px "DM Mono",monospace;color:var(--text-deep)}
-#loanOwedRow strong{color:var(--down)}
-.bank-panel .field-label{display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted);font-weight:800;margin-bottom:7px}
-.bank-panel .field-label span{color:var(--text-dim)}
-.bank-panel .input-shell{margin-bottom:12px}
+/* ---------- 周轉小金庫 ---------- */
+.bank-panel{padding:22px;position:relative;overflow:hidden}
+.bank-panel::before{content:"";position:absolute;right:-60px;top:-70px;width:190px;height:190px;border-radius:50%;background:radial-gradient(circle,var(--tint-green-strong) 0%,transparent 70%);pointer-events:none}
+.bank-panel>*{position:relative}
+.bank-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:16px}
+.bank-title{display:flex;align-items:center;gap:11px}
+.bank-title h2{margin:4px 0 0;font-size:18px;line-height:1.2;letter-spacing:-.02em;font-weight:900}
+.bank-icon{flex:none;width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:var(--tint-green);color:var(--accent-deep)}
+.bank-icon svg{width:21px;height:21px}
+.bank-status{flex:none;font-size:11px;font-weight:900;padding:5px 10px;border-radius:99px;background:var(--tint-green);color:var(--accent-deep);white-space:nowrap}
+.bank-panel.has-loan .bank-status{background:var(--tint-red);color:var(--red-text)}
+.bank-panel.has-loan .bank-icon{background:var(--tint-red);color:var(--red-text)}
+
+.bank-hero{border-radius:14px;padding:15px 16px 13px;background:linear-gradient(135deg,var(--tint-green) 0%,var(--surface-tint) 100%);border:1px solid var(--border-soft);margin-bottom:12px}
+.bank-panel.has-loan .bank-hero{background:linear-gradient(135deg,var(--tint-red) 0%,var(--surface-tint) 100%)}
+.bank-hero-label{display:block;font-size:11px;font-weight:800;color:var(--text-muted);margin-bottom:3px}
+.bank-hero-value{display:block;font:700 25px/1.15 "DM Mono",monospace;color:var(--text-money);letter-spacing:-.02em}
+.bank-panel.has-loan .bank-hero-value{color:var(--down)}
+.bank-meter{height:5px;border-radius:99px;background:var(--range-rest);overflow:hidden;margin:11px 0 9px}
+.bank-meter i{display:block;height:100%;width:0;border-radius:99px;background:var(--accent);transition:width .35s,background .35s}
+.bank-panel.has-loan .bank-meter i{background:var(--pink-soft)}
+.bank-hero-sub{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 10px;font-size:11px;font-weight:800;color:var(--text-muted)}
+.bank-hero-sub b{font:700 11px "DM Mono",monospace;color:var(--text-deep)}
+
+.bank-tiers{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:15px}
+.bank-tier{border:1px solid var(--border);background:var(--surface);border-radius:10px;padding:7px 2px 6px;display:flex;flex-direction:column;align-items:center;gap:2px;transition:border-color .15s,background .15s,transform .15s}
+.bank-tier span{font-size:10px;font-weight:800;color:var(--text-muted)}
+.bank-tier b{font:700 12px "DM Mono",monospace;color:var(--green-text)}
+.bank-tier:hover:not(:disabled){border-color:var(--accent-hover);transform:translateY(-1px)}
+.bank-tier.active{border-color:var(--accent);background:var(--tint-green);box-shadow:inset 0 0 0 1px var(--accent)}
+.bank-tier.active b{color:var(--accent-deep)}
+.bank-tier:disabled{opacity:.45}
+
+.bank-panel .input-shell{margin-bottom:7px}
+.bank-preview{margin:0 2px 14px;min-height:16px;font-size:11px;line-height:1.5;font-weight:800;color:var(--text-muted)}
+.bank-preview b{font-family:"DM Mono",monospace;color:var(--accent-deep)}
+.bank-preview.bad{color:var(--red-text)}
+
 .bank-buttons{display:grid;grid-template-columns:1fr 1fr;gap:9px}
-.bank-button{border:0;border-radius:11px;padding:13px 6px;font-size:13px;font-weight:900;white-space:nowrap;transition:transform .15s,filter .15s}
-.bank-button:hover:not(:disabled){transform:translateY(-2px);filter:brightness(.98)}
-.bank-button:disabled{opacity:.5;cursor:not-allowed}
-.bank-button.borrow{background:var(--pink-soft);color:var(--red-deep)}
-.bank-button.repay{border:1px solid var(--border-strong);background:var(--surface);color:var(--green-text)}
+.bank-button{display:flex;align-items:center;justify-content:center;gap:5px;border:0;border-radius:11px;padding:13px 6px;font-size:13px;font-weight:900;white-space:nowrap;transition:transform .15s,filter .15s,box-shadow .15s}
+.bank-button span{font-size:15px;line-height:1}
+.bank-button:hover:not(:disabled){transform:translateY(-2px);filter:brightness(1.03)}
+.bank-button:disabled{opacity:.42;cursor:not-allowed;box-shadow:none}
+.bank-button.borrow{background:var(--accent);color:#173f2b;box-shadow:0 4px 14px rgba(95,185,138,.25)}
+.bank-button.repay{background:var(--pink-soft);color:var(--red-deep);box-shadow:0 4px 14px rgba(224,110,129,.2)}
+.bank-button.repay:disabled{background:var(--surface-tint);color:var(--text-muted);border:1px solid var(--border)}
+.bank-note{margin:13px 2px 0;font-size:10.5px;line-height:1.6;color:var(--text-dim);font-weight:700}
 .metric.m-networth strong{color:var(--down)}
+@media(max-width:720px){.bank-panel{order:5;padding:16px}.bank-hero-value{font-size:22px}.bank-note{display:none}}
 
 .toast{position:fixed;left:50%;bottom:28px;transform:translate(-50%,30px);opacity:0;pointer-events:none;background:var(--brand-deep);color:var(--brand-leaf);padding:11px 18px;border-radius:12px;font-size:13px;font-weight:900;z-index:60;transition:all .25s;max-width:calc(100vw - 30px);text-align:center}
 .toast.show{opacity:1;transform:translate(-50%,0)}

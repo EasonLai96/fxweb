@@ -8,7 +8,7 @@
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%23213b3b'/%3E%3Cpath d='M10 40l12-12 9 8 9-14 14 10' fill='none' stroke='%23b8f0d6' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Nunito:wght@600;700;800;900&display=swap">
-<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="styles.css?v=20261015b">
 </head>
 <body>
 <div class="app-shell">
@@ -123,22 +123,43 @@
           </div>
           <p class="order-note">登入玩家看同一組虛構行情，下單、平倉、強平都由伺服器計算。登入新倉持有滿 7 天時按到期行情自動平倉；舊版個人行情持倉不適用新期限，須先結清才切換。槓桿越高，開倉手續費越高。行情跳空可能穿過強平線，帳戶淨值可能變成負數；淨值 ≤ 0 時會凍結開倉。</p>
         </section>
-        <section class="panel bank-panel">
-          <div class="panel-heading"><div><span class="section-kicker">EMERGENCY FUND</span><h2>周轉小金庫 <span aria-hidden="true">♡</span></h2></div><span class="order-decoration" aria-hidden="true">✦</span></div>
-          <p class="bank-intro">最多借 $200,000。日利率按金額分級：≤$10,000 為 0.01%，≤$50,000 為 0.02%，≤$100,000 為 0.03%，以上為 0.04%。模擬數據每 30 秒計一天。</p>
-          <div class="bank-stats">
-            <div id="loanOwedRow" class="bank-stat hidden"><span>目前欠款</span><strong id="loanOwed">$0.00</strong></div>
-            <div class="bank-stat"><span>目前利率</span><strong id="loanRate">—</strong></div>
+        <section class="panel bank-panel" id="bankPanel">
+          <div class="bank-head">
+            <div class="bank-title">
+              <span class="bank-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><path d="M3 10l9-6 9 6M5 10v8M9.5 10v8M14.5 10v8M19 10v8M3 20h18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </span>
+              <div><span class="section-kicker">EMERGENCY FUND</span><h2>周轉小金庫</h2></div>
+            </div>
+            <span class="bank-status" id="bankStatus">無借款</span>
           </div>
-          <div>
-            <label class="field-label" for="loanAmount">金額 <span>USD</span></label>
-            <div class="input-shell"><span>$</span><input id="loanAmount" type="number" min="1" step="100" placeholder="借款 / 還款金額" inputmode="decimal"><button id="loanMaxBtn" type="button">MAX</button></div>
+
+          <div class="bank-hero" id="bankHero">
+            <span class="bank-hero-label" id="bankHeroLabel">可借額度</span>
+            <strong class="bank-hero-value" id="bankHeroValue">$200,000.00</strong>
+            <div class="bank-meter"><i id="bankMeter"></i></div>
+            <div class="bank-hero-sub">
+              <span id="loanOwedRow" class="hidden">本金 <b id="loanPrincipal">$0</b> ・ 利息 <b id="loanOwed">$0.00</b></span>
+              <span>利率 <b id="loanRate">—</b></span>
+            </div>
           </div>
+
+          <div class="bank-tiers" role="list" aria-label="日利率分級">
+            <button type="button" class="bank-tier" data-tier="0" data-amount="10000" role="listitem"><span>≤ 1萬</span><b>0.01%</b></button>
+            <button type="button" class="bank-tier" data-tier="1" data-amount="50000" role="listitem"><span>≤ 5萬</span><b>0.02%</b></button>
+            <button type="button" class="bank-tier" data-tier="2" data-amount="100000" role="listitem"><span>≤ 10萬</span><b>0.03%</b></button>
+            <button type="button" class="bank-tier" data-tier="3" data-amount="200000" role="listitem"><span>≤ 20萬</span><b>0.04%</b></button>
+          </div>
+
+          <label class="field-label" for="loanAmount">金額 <span>USD</span></label>
+          <div class="input-shell"><span>$</span><input id="loanAmount" type="number" min="1" step="100" placeholder="輸入金額" inputmode="decimal"><button id="loanMaxBtn" type="button">MAX</button></div>
+          <p class="bank-preview" id="bankPreview">每 30 秒計一天，利息只算本金、不利滾利。</p>
+
           <div class="bank-buttons">
-            <button id="loanBorrowBtn" type="button" class="bank-button borrow">申請貸款</button>
-            <button id="loanRepayBtn" type="button" class="bank-button repay" disabled>償還貸款</button>
+            <button id="loanBorrowBtn" type="button" class="bank-button borrow"><span aria-hidden="true">＋</span>申請貸款</button>
+            <button id="loanRepayBtn" type="button" class="bank-button repay" disabled><span aria-hidden="true">↩</span>償還貸款</button>
           </div>
-          <p class="order-note">借來的現金可立即交易，但未償還的本金＋利息會從淨資產與排行榜成績中扣除。有未償還借款時不能再借；還款時不填金額＝全額還清。重置帳戶會清除借款。</p>
+          <p class="bank-note">欠款會從淨資產與排行榜成績扣除；還清前不能再借。還款不填金額＝全額還清，重置帳戶會清除借款。</p>
         </section>
         <div class="side-disclaimer">這是遊戲，不提供真實交易。行情為虛構模擬，不是即時報價。介面參考 bilibili 小遊戲「FX 简单!」重新製作。</div>
       </aside>
@@ -219,6 +240,6 @@
   </div>
 </div>
 
-<script type="module" src="app.mjs"></script>
+<script type="module" src="app.mjs?v=20261015b"></script>
 </body>
 </html>
