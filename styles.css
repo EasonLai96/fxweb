@@ -47,6 +47,8 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .brand{display:flex;align-items:center;gap:12px;min-width:0}
 .brand-mark{width:40px;height:40px;border-radius:14px;background:var(--brand-deep);color:var(--brand-leaf);display:grid;place-items:center;transform:rotate(-8deg);flex:none}
 .brand-mark svg{width:30px;height:30px}
+.brand-mark:has(img){overflow:hidden;background:#ffd6e3;box-shadow:0 0 0 2px var(--surface),0 0 0 3px #f4a4c0}
+.brand-mark img{width:100%;height:100%;object-fit:cover;display:block}
 .brand strong{display:block;font-size:20px;letter-spacing:-.04em;font-weight:900;line-height:1.1;white-space:nowrap}
 .brand small{display:block;font:600 10px/1.3 "DM Mono",monospace;letter-spacing:.22em;color:var(--text-muted);margin-top:5px}
 .top-actions{display:flex;align-items:center;gap:16px}
