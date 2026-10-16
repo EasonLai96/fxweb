@@ -373,6 +373,8 @@ html[data-theme="night"] .primary-button{background:var(--accent);color:#0b2a1e}
 }
 @media(max-width:720px){
   .session-pill{display:none}
+  #onlineCount{display:flex;font-size:10px;padding:5px 7px;white-space:nowrap}
+  .top-actions{gap:5px}.top-actions .text-button{font-size:10px}
   .top-actions .text-button{white-space:nowrap}
   .pair-row{flex:0 0 112px;width:112px;min-width:0;overflow:hidden}
   .pair-row canvas{width:100%;max-width:100%}

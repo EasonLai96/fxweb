@@ -2,6 +2,7 @@ import { ensureProgress } from "./progress.js";
 import { joinSeason, leaveSeason, updateSeasonScore, seasonParticipationView, publicLeaderboard } from "./leaderboard.js";
 import { sharedPricer, absoluteTick } from "./shared-market.js";
 import { captureSentiment, loadSnapshots, SENTIMENT_START } from "./sentiment.js";
+import { presence, prunePresence } from "./presence.js";
 // fxweb 後端：Cloudflare Worker + D1。帳號密碼登入、救援碼重設密碼、伺服器端計算的遊戲。
 // 密碼：PBKDF2-SHA256（Workers 上限 100000 次迭代）+ 每人隨機 salt。
 // 登入憑證：隨機 token，以 Authorization: Bearer 傳遞；資料庫只存 token 的 SHA-256。
@@ -404,6 +405,16 @@ async function deleteAccount(req, env) {
   return { status: 200, body: { ok: true } };
 }
 
+async function onlineHeartbeat(req, env) {
+  const body = await readJson(req, 256);
+  if (typeof body.tabId !== 'string' || !/^[a-f0-9]{32}$/.test(body.tabId))
+    throw new HttpError(400, 'bad_tab_id', '瀏覽器識別碼格式錯誤');
+  // A token, if supplied, must be valid. Guest requests without a token remain anonymous.
+  const user = req.headers.has('Authorization') ? await requireUser(req, env) : null;
+  const data = await presence(env, body.tabId, user?.id ?? null);
+  return { status: 200, body: data };
+}
+
 function canonicalJson(value) {
   if (Array.isArray(value)) return "[" + value.map(canonicalJson).join(",") + "]";
   if (value && typeof value === "object") return "{" + Object.keys(value).sort().map(k => JSON.stringify(k) + ":" + canonicalJson(value[k])).join(",") + "}";
@@ -411,6 +422,7 @@ function canonicalJson(value) {
 }
 
 const ROUTES = {
+  "POST /api/online": onlineHeartbeat,
   "POST /api/register": register,
   "POST /api/login": login,
   "POST /api/logout": logout,
@@ -433,7 +445,7 @@ const ROUTES = {
 };
 
 export default {
-  async scheduled(event, env) { await captureSentiment(env, event.scheduledTime); },
+  async scheduled(event, env) { await captureSentiment(env, event.scheduledTime); await prunePresence(env, event.scheduledTime); },
   async fetch(req, env) {
     const url = new URL(req.url);
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(req, env) });

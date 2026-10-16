@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as E from '../../engine.mjs';
 import { PAIRS, CRYPTO_KEYS, FX_KEYS, EVENT_TYPES, pickEvent, eventShape, EVENT_SPAN, priceDigits, createMarket, createMarketState, stepMarket, makeRng } from '../../market.mjs';
-import { makeSharedMarket, sharedPricer, EVENT_START, EVENT_BUCKET, WHALE_START, WHALE_CAPITAL } from '../src/shared-market.js';
+import { makeSharedMarket, sharedPricer, EVENT_START, EVENT_BUCKET, WHALE_START, WHALE_CAPITAL, RISE_SOFTEN_START, RISE_SOFTEN_FACTOR } from '../src/shared-market.js';
 import { newGame, advance, openOrder, TICK_MS } from '../src/game.js';
 
 const secret = '77'.repeat(32);
@@ -35,9 +35,12 @@ test('pickEvent：每種事件都抽得到、漲跌方向與範圍正確', () =>
 test('外匯不被重大事件改寫：開始後一年的黃金對照報價不變', () => {
   const at = sharedPricer(secret);
   // 由舊版（5d1f62b）的純外匯公式算出，改版事件不應改寫它們。
-  assert.equal(at(EVENT_START + 2500, 'EUR/USD'), 1.0870474973570807);
-  assert.equal(at(EVENT_START + 2500, 'AUD/USD'), 0.659758067234897);
-  assert.equal(at(EVENT_START + 2500, 'USD/JPY'), 149.8237980364051);
+  const historical = { 'EUR/USD': 1.0870474973570807, 'AUD/USD': 0.659758067234897, 'USD/JPY': 149.8237980364051 };
+  for (const [pair, oldPrice] of Object.entries(historical)) {
+    const anchor = at(RISE_SOFTEN_START, pair);
+    const expected = oldPrice > anchor ? anchor + (oldPrice-anchor)*RISE_SOFTEN_FACTOR : oldPrice;
+    assert.equal(at(EVENT_START + 2500, pair), expected);
+  }
   for (const e of findEvents(EVENT_START, EVENT_START + 57600))
     if (e.event !== 'whale-sweep') assert.ok(!Object.keys(e.moves).some(p => FX_KEYS.includes(p)), `舊事件不可改寫外匯`);
 });

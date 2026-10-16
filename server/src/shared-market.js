@@ -3,6 +3,10 @@
 import { hmacKey, PAIRS, INSTRUMENTS, isEtf, NEWS_SETTLE, FX_KEYS, ETF_KEYS, CRYPTO_KEYS, volOf, pickEvent, eventShape, EVENT_SPAN } from '../../market.mjs';
 import { SENTIMENT_START, SENTIMENT_BUCKET, sentimentLog } from './sentiment.js';
 export const TICK_MS = 1500;
+// From this future switch onward, gains above each instrument's frozen switch
+// quote are softened. Previous ticks and losses below the anchor stay unchanged.
+export const RISE_SOFTEN_START = Date.UTC(2026, 9, 16, 6, 15, 0) / TICK_MS;
+export const RISE_SOFTEN_FACTOR = 0.8;
 export const SHARED_MARKET_ALGORITHM = 'fxweb/shared/hmac-sha256-causal-v1';
 // PAIR_KEYS 包含 ETF（價格、K 線都會算）。新聞則分兩條獨立的 HMAC 串流：
 // 外匯沿用原本的 'news' 網域與 6 個外匯清單，所以既有外匯新聞與價格逐位元不變；
@@ -85,11 +89,19 @@ function context(secret, sentiment) {
     const start = Math.floor(t / SENTIMENT_BUCKET) * SENTIMENT_BUCKET;
     return sentimentLog(sentiment,t,p,u(digest('sentiment-direction',start,p)));
   }
+  function softenRise(v,t,p) {
+    if (t <= RISE_SOFTEN_START) return v;
+    const baseline = price(RISE_SOFTEN_START,p);
+    if (v <= baseline) return v;
+    // Smoothly ramp the adjustment in over an hour, preserving the first tick.
+    const elapsed = Math.min(1,(t-RISE_SOFTEN_START)/2400);
+    return baseline + (v-baseline)*(1-(1-RISE_SOFTEN_FACTOR)*elapsed);
+  }
   function price(t,p) {
     checkTick(t); checkPair(p);
     const id=`${t}|${p}`;
     if (quotes.has(id)) return quotes.get(id);
-    if (isEtf(p) && t>ETF_SWITCH) { let v=etfPrice(t,p); const tilt=crowdLog(t,p); if (tilt) v*=Math.exp(tilt); quotes.set(id,v); return v; }
+    if (isEtf(p) && t>ETF_SWITCH) { let v=etfPrice(t,p); const tilt=crowdLog(t,p); if (tilt) v*=Math.exp(tilt); v=softenRise(v,t,p); quotes.set(id,v); return v; }
     const start=Math.floor(t/SPAN)*SPAN, x=(t-start)/SPAN, smooth=x*x*(3-2*x);
     // The current anchor first becomes available at 'start'; never read the NEXT anchor.
     const trend=anchor(start-SPAN,p)*(1-smooth)+anchor(start,p)*smooth;
@@ -102,6 +114,7 @@ function context(secret, sentiment) {
     const whale=t>=WHALE_START ? whaleLog(t,p) : 0;
     if (shock || whale) result*=Math.exp(shock+whale);
     const tilt=crowdLog(t,p); if (tilt) result*=Math.exp(tilt);
+    result=softenRise(result,t,p);
     quotes.set(id,result); return result;
   }
   // ===== ETF：比照真實市場（照真實日曆）=====

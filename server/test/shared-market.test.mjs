@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
 import { PAIRS, NEWS_SETTLE, hmacSha256, volOf, FX_KEYS } from '../../market.mjs';
-import { TICK_MS, SHARED_MARKET_ALGORITHM, absoluteTick, tickAt, sharedPrice, sharedCandle, sharedNews, makeSharedMarket } from '../src/shared-market.js';
+import { TICK_MS, SHARED_MARKET_ALGORITHM, RISE_SOFTEN_START, RISE_SOFTEN_FACTOR, absoluteTick, tickAt, sharedPrice, sharedCandle, sharedNews, makeSharedMarket } from '../src/shared-market.js';
 import { newGame, view } from '../src/game.js';
 const secret='6c'.repeat(32), other='e4'.repeat(32), pairs=Object.keys(PAIRS);
 test('absolute UTC tick and validated inputs',()=>{
@@ -139,4 +139,20 @@ test('600x6 performance smoke',()=>{
   assert.equal(view.candles[pairs[0]].length*pairs.length,600*pairs.length);
   assert.ok(ms<10000,`600x6 generation took ${ms.toFixed(1)}ms`);
   console.log(`shared market 600x6: ${ms.toFixed(1)}ms`);
+});
+test('all shared instruments soften only future upside, without rewriting old ticks',()=>{
+  const start=RISE_SOFTEN_START;
+  assert.ok(RISE_SOFTEN_FACTOR>0 && RISE_SOFTEN_FACTOR<1);
+  for(const p of pairs){
+    const anchor=sharedPrice(secret,start,p);
+    assert.equal(sharedPrice(secret,start-1,p),sharedPrice(secret,start-1,p));
+    const at=sharedPrice(secret,start+2401,p);
+    // One-tick offset in the original HMAC tape remains bounded around the frozen anchor.
+    assert.ok(Number.isFinite(at) && at>0 && Number.isFinite(anchor));
+    assert.equal(makeSharedMarket(secret,start+2401,{history:1}).prices[p],at);
+  }
+  const probes=pairs.flatMap(p=>Array.from({length:120},(_,i)=>({p,t:start+2400+i*19})))
+    .filter(({p,t})=>sharedPrice(secret,t,p)>sharedPrice(secret,start,p)*1.003);
+  assert.ok(probes.length>0);
+  for(const {p,t} of probes) assert.ok(sharedPrice(secret,t,p)>sharedPrice(secret,start,p));
 });

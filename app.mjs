@@ -1,15 +1,18 @@
-import { initExtras } from "./extras.mjs?v=20261016h";
-import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261016h";
-import * as E from "./engine.mjs?v=20261016h";
-import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261016h";
-import * as Store from "./store.mjs?v=20261016h";
-import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261016h";
-import * as Cloud from "./cloud.mjs?v=20261016h";
-import { createRemoteMarket } from "./remote.mjs?v=20261016h";
-import { createAchievementBook } from "./achievements.mjs?v=20261016h";
-import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261016h";
+import { initExtras } from "./extras.mjs?v=20261016i";
+import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261016i";
+import * as E from "./engine.mjs?v=20261016i";
+import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261016i";
+import * as Store from "./store.mjs?v=20261016i";
+import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261016i";
+import * as Cloud from "./cloud.mjs?v=20261016i";
+import { createRemoteMarket } from "./remote.mjs?v=20261016i";
+import { createAchievementBook } from "./achievements.mjs?v=20261016i";
+import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261016i";
 
 const THEME_KEY = "fxweb.theme";
+// One random id per tab lifetime; never derive presence from username or IP.
+const onlineTabId = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
+let onlinePending = false, onlineAt = 0, onlineSuccessAt = 0;
 // 兩種模式：
 //   guest  = 訪客，行情與帳戶都在瀏覽器裡算（可被修改，不計成績）
 //   server = 已登入，行情與帳戶都由伺服器計算，瀏覽器只負責顯示與送出下單指令
@@ -751,7 +754,20 @@ function bindBattle() {
   $("battleExitBtn").onclick = leaveBattle;
 }
 
+async function updateOnline(force = false) {
+  if (!Cloud.enabled() || document.hidden || onlinePending || (!force && Date.now() - onlineAt < 20_000)) return;
+  onlinePending = true; onlineAt = Date.now();
+  try {
+    const data = await Cloud.online(onlineTabId);
+    onlineSuccessAt = Date.now();
+    $("onlineCount").textContent = `在線 ${data.online} 人`;
+    $("onlineCount").title = `最近 ${data.windowSeconds} 秒活躍：登入 ${data.players}、訪客 ${data.guests}（訪客依分頁計）`;
+  } catch {
+    if (Date.now() - onlineSuccessAt > 75_000) $("onlineCount").textContent = '在線 —';
+  } finally { onlinePending = false; }
+}
 function loop() {
+  updateOnline();
   if (mode === "server") { poll(); return; }
   if (mode === "battle") { if (battleAuto && !risk) nextBattleDay(); return; }
   if (ui.paused || (risk && risk.auto)) return;
@@ -878,7 +894,7 @@ function bind() {
   const toggle = (id, key) => { $(id).onclick = () => { ui[key] = !ui[key]; $(id).classList.toggle("active", ui[key]); renderChart(); }; };
   toggle("maBtn", "showMA"); toggle("newsMarkBtn", "showNews"); toggle("posLineBtn", "showPos");
   $("pauseBtn").onclick = () => { ui.paused = !ui.paused; $("pauseBtn").textContent = ui.paused ? "繼續" : "暫停"; renderModeBadge(); };
-  document.addEventListener("visibilitychange", () => { if (!document.hidden && mode === "server") poll(); });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) { updateOnline(true); if (mode === "server") poll(); } });
   $("historyToggle").onclick = () => { ui.historyOpen = !ui.historyOpen; renderHistory(); };
   $("themeBtn").onclick = () => {
     const next = theme() === "night" ? "day" : "night";
@@ -917,6 +933,7 @@ function setSyncUi(kind, text) {
 
 function switchToServer() {
   enterServer();
+  updateOnline(true);
   setSyncUi("busy", "連線中…");
   renderAll();
   poll();
@@ -924,6 +941,7 @@ function switchToServer() {
 
 function switchToGuest(msg) {
   enterGuest();
+  updateOnline(true);
   renderAccountBtn();
   renderAll();
   if (msg) toast(msg);
@@ -1043,6 +1061,7 @@ bind();
 bindAuth();
 renderAccountBtn();
 if (Cloud.enabled() && Cloud.user()) switchToServer(); else { enterGuest(); renderAll(); }
+updateOnline(true);
 extras = initExtras({
   getContext: () => ({ mode, username: Cloud.user(), account: state, prices: market.prices(), progress, resets, catchingUp, equityPoints: equityPts.slice(), book }),
   refresh: async () => {

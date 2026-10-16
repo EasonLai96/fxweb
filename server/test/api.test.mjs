@@ -494,3 +494,17 @@ test("遊戲操作、讀取和重置各有節流", async () => {
   for (let i = 0; i < 120; i++) assert.equal((await call("GET", "/api/game", { token })).status, 200);
   assert.equal((await call("GET", "/api/game", { token })).status, 429);
 });
+test('online API includes anonymous guests, deduplicates authenticated tabs and rejects bad bearer', async () => {
+  const { call, reg } = setup(), tab = n => n.toString(16).padStart(32,'0');
+  let r = await call('POST','/api/online',{body:{tabId:tab(1)}});
+  assert.equal(r.status,200); assert.deepEqual([r.body.online,r.body.guests,r.body.players],[1,1,0]);
+  const user=await reg('onlineuser');
+  r = await call('POST','/api/online',{body:{tabId:tab(2)},token:user.token});
+  assert.deepEqual([r.body.online,r.body.guests,r.body.players],[2,1,1]);
+  r = await call('POST','/api/online',{body:{tabId:tab(3)},token:user.token});
+  assert.deepEqual([r.body.online,r.body.guests,r.body.players],[2,1,1]);
+  r = await call('POST','/api/online',{body:{tabId:tab(1)},token:user.token});
+  assert.deepEqual([r.body.online,r.body.guests,r.body.players],[1,0,1]);
+  assert.equal((await call('POST','/api/online',{body:{tabId:'bad'}})).status,400);
+  assert.equal((await call('POST','/api/online',{body:{tabId:tab(4)},token:'invalidtokenwithlengthok'})).status,401);
+});
