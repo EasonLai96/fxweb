@@ -4,6 +4,7 @@ import * as E from "../../engine.mjs";
 import { ensureProgress, recordOpen, recordClose, resetProgress, progressView } from "./progress.js";
 import { createMarketState, secureMarketState, stepMarket, publicNews, PAIRS, NEWS_SETTLE } from "../../market.mjs";
 import { absoluteTick, makeSharedMarket, sharedPricer } from "./shared-market.js";
+import { EXECUTION_START, EXECUTION_VERSION, maxMarketNotional, executionPrice, carryCharge } from "./execution.js";
 
 export const TICK_MS = 1500;
 export const MAX_CATCHUP = 600;
@@ -36,6 +37,20 @@ function heldPairs(a) { return [...new Set(a.positions.map(p => p.pair))]; }
 function trimAccount(a) {
   if (a.log.length > LOG_KEEP) a.log.splice(0, a.log.length - LOG_KEEP);
 }
+// 只影響新規則版本的倉位；舊倉仍以舊進出場價、舊收費方式結算。
+function closeFill(pos, mid, t) {
+  return pos.executionVersion === EXECUTION_VERSION
+    ? executionPrice(mid, pos.pair, pos.side, pos.notional, t, true) : mid;
+}
+function settleCarry(a, t) {
+  for (const pos of a.positions) {
+    if (pos.executionVersion !== EXECUTION_VERSION) continue;
+    const from = pos.carryAt ?? pos.openedAt;
+    const charge = carryCharge(pos, from, t);
+    if (charge > 0) { a.cash -= charge; pos.carryPaid = (pos.carryPaid || 0) + charge; }
+    pos.carryAt = t;
+  }
+}
 function saveEquity(a, prices, step) {
   if (step % EQ_EVERY === 0) {
     a.eq.push(Math.round(E.equity(a, prices) * 100) / 100);
@@ -43,20 +58,29 @@ function saveEquity(a, prices, step) {
   }
 }
 function settle(g, prices, t, step, events, expire = false) {
-  const a = g.account, positions = new Map(a.positions.map(pos => [pos.id, pos]));
-  for (const ev of E.settleTick(a, prices, t)) {
-    if (ev.type === 'liquidated') {
-      const pos = positions.get(ev.id);
-      recordClose(g, pos, E.unrealizedPnl(pos, prices[pos.pair]), 'liquidated', t);
+  const a = g.account;
+  settleCarry(a, t);
+  // 新倉的每筆強平各自按反向 bid/ask＋滑價成交；權益圖仍以中間價估值。
+  // 同商品不同名目可能有不同滑價，不能共用一個 riskPrices[pair]。
+  for (const pos of [...a.positions]) {
+    if (!(prices[pos.pair] > 0)) continue; // 缺價不能用 undefined 計算損益、寫壞帳戶現金
+    const fill = closeFill(pos, prices[pos.pair], t);
+    const loss = E.lossPct(pos, fill);
+    if (loss >= E.LIQ_LOSS - 1e-9) {
+      const borrowed = !!pos.borrowed, refused = !!pos.refusedHelp;
+      const result = E.closePosition(a, pos.id, fill, t, 'liquidated');
+      recordClose(g, pos, result.pnl, 'liquidated', t);
+      events.push({ type: 'liquidated', id: pos.id, pair: pos.pair, borrowed, refused, step });
+    } else if (loss >= E.WARN_LOSS - 1e-9) {
+      events.push({ type: 'warning', id: pos.id, pair: pos.pair, lossPct: loss, step });
     }
-    events.push({ ...ev, step });
   }
   if (expire) {
     for (const pos of [...a.positions]) {
       if (!Number.isFinite(pos.openedAt) || pos.openedAt < 0 || pos.openedAt > t)
         throw new Error('Invalid shared position opening time');
       if (t >= pos.openedAt + MAX_HOLD_MS) {
-        const result = E.closePosition(a, pos.id, prices[pos.pair], t, 'expired');
+        const result = E.closePosition(a, pos.id, closeFill(pos, prices[pos.pair], t), t, 'expired');
         recordClose(g, pos, result.pnl, 'expired', t);
         events.push({ type: 'expired', id: pos.id, pair: pos.pair, pnl: result.pnl, step });
       }
@@ -213,14 +237,27 @@ export function openOrder(g, { pair, side, leverage, margin, max = false }, now,
   const prices = accountPrices(g, marketSecret, [pair]);
   // MAX 用即時伺服器估值計算；送單與前端按 MAX 間可能已過數根行情，
   // 不能拿舊顯示值直接當保證金，尤其是高槓桿、大額持倉。
+  const realistic = shared(g) && now >= EXECUTION_START;
   if (max === true) {
-    margin = E.maxAffordableMargin(E.freeMargin(g.account, prices), leverage);
+    const affordable = E.maxAffordableMargin(E.freeMargin(g.account, prices), leverage);
+    // MAX 只吃此商品一次可成交的深度；高資產可拆成多張市價單。
+    margin = realistic ? Math.min(affordable, Math.floor(maxMarketNotional(pair) / leverage * 100) / 100) : affordable;
     if (margin < 10) throw new GameError('可用保證金不足');
   }
+  const notional = margin * leverage;
+  if (realistic && notional > maxMarketNotional(pair))
+    throw new GameError(`單筆流動性不足，最多成交名目 $${maxMarketNotional(pair).toLocaleString('en-US')}，請拆單`);
   // Preserve the exact order time: expiry occurs on the first historical tick
   // at/after openedAt + seven days, never up to 1499 ms early.
-  const r = E.openPosition(g.account, prices, { pair, side, leverage, notional: margin * leverage, time: now });
+  const fillPrices = realistic ? { ...prices, [pair]: executionPrice(prices[pair], pair, side, notional, now) } : prices;
+  const r = E.openPosition(g.account, fillPrices, { pair, side, leverage, notional, time: now });
   if (!r.ok) throw new GameError(r.error);
+  if (realistic) {
+    r.position.executionVersion = EXECUTION_VERSION;
+    r.position.carryAt = now;
+    r.position.carryPaid = 0;
+    r.position.midAtOpen = prices[pair];
+  }
   recordOpen(g, r.position, now);
   trimAccount(g.account);
   return r.position;
@@ -230,7 +267,8 @@ export function closeOrder(g, id, now, marketSecret) {
   const pos = g.account.positions.find(p => p.id === id);
   if (!pos) throw new GameError('找不到持倉（可能已被強制平倉）');
   const prices = accountPrices(g, marketSecret);
-  const r = E.closePosition(g.account, id, prices[pos.pair], now);
+  settleCarry(g.account, now);
+  const r = E.closePosition(g.account, id, closeFill(pos, prices[pos.pair], now), now);
   recordClose(g, pos, r.pnl, 'manual', now);
   trimAccount(g.account);
   return r.pnl;
@@ -311,6 +349,10 @@ export function view(g, since, events = [], now = Date.now(), marketSecret) {
     catchingUp: pending > 0, remainingTicks: pending, catchupBatchTicks: MAX_CATCHUP,
     nextTickIn: isShared ? Math.max(0, (step + 1) * TICK_MS - now) : Math.max(0, g.lastStepAt + TICK_MS - now),
     prices: headPrices, candles,
+    execution: isShared && now >= EXECUTION_START ? {
+      mode: '示意市價成交', version: EXECUTION_VERSION, maxNotional: Object.fromEntries(pairs.map(p => [p, maxMarketNotional(p)])),
+      note: '價格有買賣價差及大單滑價，借用槓桿資金按真實時間計息。單筆市價單有流動性上限；可拆單。非真實券商費率。',
+    } : null,
     news: isShared ? m.news.filter(n => n.step > newsFrom) : m.news.filter(n => n.step > newsFrom).map(n => publicNews(n, step)),
     account: { cash: a.cash, startingCash: a.startingCash, nextId: a.nextId,
       positions: a.positions, log: a.log.filter(l => l.type === 'close').slice(-15), eq: a.eq,

@@ -21,6 +21,24 @@ export const ETF_SWITCH = Date.UTC(2026, 9, 16, 4, 0, 0) / 1500;   // 2026-10-16
 const ETF_SIGMA = 0.17;                                      // SPY 真實年化波動約 17%
 const ETF_SPANS = [64, 2400, 57600, 57600 * 21, 57600 * 182];
 export const EVENT_CHANCE = 0.45;     // 每 5 分鐘 45% 機率 → 平均約 11 分鐘一次
+// 虛構大戶：資金明顯高於 2026-10-16 第一名的約 $1.3×10^15，
+// 不是交易帳戶／榜單玩家，不接受使用者指令；只產生 deterministic 共同行情事件。
+export const WHALE_CAPITAL = 1e18;   // $100 京（只是劇情設定，實際波幅仍受控）
+export const WHALE_START = Date.UTC(2026, 9, 16, 8, 0, 0) / TICK_MS; // 與其他事件同時開始，舊行情完全不變
+const WHALE_CHANCE = 0.018;          // 每 5 分鐘約 1.8%：平均約 4.6 小時一次
+const WHALE_IMPACT = 0.012;          // 外匯短暫掃盤約 1.2%，與極端流動性不足情境相符；不改動已結算歷史
+// 掃盤後可能留下趨勢、也可能反轉；每根用只在當根可得的新 HMAC 擾動。
+// 因此看到事件當刻的方向，無法從公開資訊預先知道後續會延續還是反轉。
+const WHALE_HOLD = 10, WHALE_DECAY = 80, WHALE_PATH = 120;
+const whaleContinuation = k => k < 2 ? 0 : Math.min(1,(k-1)/WHALE_DECAY);
+export function whaleShape(k) {
+  if (k < 0) return 0;
+  if (k < 2) return [0.7, 1][k];
+  if (k < WHALE_HOLD) return 1;
+  if (k >= WHALE_HOLD + WHALE_DECAY) return 0;
+  const x = (k - WHALE_HOLD) / WHALE_DECAY;
+  return 1 - x*x*(3-2*x);
+}
 
 const HEADLINES = {
   'EUR/USD': [['歐洲央行官員暗示將再升息',1],['歐元區製造業 PMI 意外疲軟',-1],['德國通膨數據高於預期',1],['美國非農就業強勁，美元走高',-1]],
@@ -75,7 +93,8 @@ function context(secret) {
     let result=PAIRS[p]*Math.exp(volOf(p)*(trend+jitter*0.0014));
     // 重大事件的跳空；沒有事件影響時完全不乘，外匯價格逐位元不變。
     const shock=t>=EVENT_START ? shockLog(t,p) : 0;
-    if (shock) result*=Math.exp(shock);
+    const whale=t>=WHALE_START ? whaleLog(t,p) : 0;
+    if (shock || whale) result*=Math.exp(shock+whale);
     quotes.set(id,result); return result;
   }
   // ===== ETF：比照真實市場（照真實日曆）=====
@@ -89,7 +108,8 @@ function context(secret) {
   }
   function etfPrice(t,p) {
     const {mu,risk}=INSTRUMENTS[p], sig=ETF_SIGMA*risk;
-    return etfBase(p)*Math.exp(etfLog(t,p,mu,sig)-etfLog(ETF_SWITCH,p,mu,sig)+(t>=EVENT_START ? shockLog(t,p) : 0));
+    return etfBase(p)*Math.exp(etfLog(t,p,mu,sig)-etfLog(ETF_SWITCH,p,mu,sig)
+      +(t>=EVENT_START ? shockLog(t,p) : 0)+(t>=WHALE_START ? whaleLog(t,p) : 0));
   }
   function etfLog(t,p,mu,sig) {
     let x=mu*(t-ETF_SWITCH)/YEAR_TICKS;
@@ -132,15 +152,51 @@ function context(secret) {
     }
     return s;
   }
+  // 大戶掃盤獨立 HMAC 串流：不影響幣圈既有事件的抽籤／歷史。
+  // 訊號只在事件當根公開；衝擊會快速回吐，雙向高槓桿都有被洗出的風險。
+  const whaleBuckets=new Map();
+  function whaleEvent(b) {
+    if (whaleBuckets.has(b)) return whaleBuckets.get(b);
+    const start=b*EVENT_BUCKET; let ev=null;
+    if (start+EVENT_BUCKET>WHALE_START) {
+      const d=digest('whale',start), step=start+Math.floor(u(d,4)*EVENT_BUCKET);
+      if (u(d)<WHALE_CHANCE && step>=WHALE_START) {
+        const pair=FX_KEYS[Math.floor(u(d,8)*FX_KEYS.length)];
+        const sign=u(d,12)<0.5 ? -1 : 1;
+        const move=sign*(WHALE_IMPACT*(0.8+u(d,16)*0.4));
+        ev={ step, pair, move, event:'whale-sweep', text:`神祕大戶（模擬資金 $100 京）掃盤 ${pair}！價格急${sign>0?'拉':'殺'}；後續可能延續或反轉，高槓桿小心遭洗出場`, claimed:sign };
+      }
+    }
+    whaleBuckets.set(b,ev); return ev;
+  }
+  function whaleLog(t,p) {
+    let x=0;
+    for(let b=Math.max(0,Math.floor((t-WHALE_PATH)/EVENT_BUCKET));b<=Math.floor(t/EVENT_BUCKET);b++) {
+      const e=whaleEvent(b);
+      if (!e || e.pair!==p || t<e.step) continue;
+      const k=t-e.step, base=Math.log(1+e.move);
+      // 當根跳空是唯一已公開的方向；後續的延續/反轉由「當根」摘要逐步揭露，
+      // 有一半情形最後留下同向的趨勢、一半情形回吐，不能單靠事件做反向套利。
+      const continuation=u(digest('whale-trend',e.step,p))<0.5 ? 2 : 0;
+      const baseline=whaleShape(k) + continuation*whaleContinuation(k);
+      const jitter=k<2 || k>=WHALE_PATH ? 0 : (u(digest('whale-path',t,p))*2-1)*0.4*whaleShape(k);
+      x+=base*(baseline + jitter);
+    }
+    return x;
+  }
   // [from, to] 之間發生的事件（對外版本：不含內部 log 值）
   function eventsBetween(from,to) {
     const out=[];
-    if (to<EVENT_START) return out;
+    if (to<Math.min(EVENT_START,WHALE_START)) return out;
     for(let b=Math.max(0,Math.floor(Math.max(from,EVENT_START)/EVENT_BUCKET));b<=Math.floor(to/EVENT_BUCKET);b++) {
       const ev=bucketEvent(b);
       if (ev && ev.step>=from && ev.step<=to) out.push({step:ev.step,pair:ev.pair,text:ev.text,claimed:ev.claimed,event:ev.id,moves:ev.moves,settled:true,reversed:false});
+      const whale=whaleEvent(b);
+      if (whale && whale.step>=from && whale.step<=to)
+        out.push({step:whale.step,pair:whale.pair,text:whale.text,claimed:whale.claimed,event:whale.event,
+          moves:{[whale.pair]:whale.move},settled:true,reversed:false});
     }
-    return out;
+    return out.sort((a,b)=>a.step-b.step);
   }
   function candle(t,p) {
     checkTick(t); checkPair(p);

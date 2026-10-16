@@ -69,7 +69,9 @@ test('登入帳戶可交易 ETF：開倉、推進、平倉', () => {
   const later = start + 20 * TICK_MS;
   advance(g, later, secret);
   const pnl = closeOrder(g, pos.id, later, secret);
-  const expect = (sharedPrice(secret, Math.floor(later / TICK_MS), 'QQQ') / pos.entry - 1) * pos.notional;
+  const oldMid = sharedPrice(secret, Math.floor(later / TICK_MS), 'QQQ');
+  assert.ok(g.account.log.at(-1).price < oldMid, '新倉做多按 bid 成交，不能免費平倉');
+  const expect = (g.account.log.at(-1).price / pos.entry - 1) * pos.notional;
   assert.ok(Math.abs(pnl - expect) < 1e-6);
   assert.throws(() => openOrder(g, { pair: 'TSLA', side: 1, leverage: 5, margin: 100 }, later, secret), /不支援/);
 });

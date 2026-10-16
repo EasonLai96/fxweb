@@ -1,13 +1,13 @@
-import { initExtras } from "./extras.mjs?v=20261016e";
-import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261016e";
-import * as E from "./engine.mjs?v=20261016e";
-import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261016e";
-import * as Store from "./store.mjs?v=20261016e";
-import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261016e";
-import * as Cloud from "./cloud.mjs?v=20261016e";
-import { createRemoteMarket } from "./remote.mjs?v=20261016e";
-import { createAchievementBook } from "./achievements.mjs?v=20261016e";
-import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261016e";
+import { initExtras } from "./extras.mjs?v=20261016f";
+import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261016f";
+import * as E from "./engine.mjs?v=20261016f";
+import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261016f";
+import * as Store from "./store.mjs?v=20261016f";
+import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261016f";
+import * as Cloud from "./cloud.mjs?v=20261016f";
+import { createRemoteMarket } from "./remote.mjs?v=20261016f";
+import { createAchievementBook } from "./achievements.mjs?v=20261016f";
+import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261016f";
 
 const THEME_KEY = "fxweb.theme";
 // 兩種模式：
@@ -21,6 +21,7 @@ let lastOk = 0;             // 上次成功連上伺服器的時間
 let modeEpoch = 0, catchingUp = false;
 let progress = null, resets = 0, extras = null, leaderUI = null;
 let serverMarketMode = "shared", switchStatus = "ready", settledPrices = null, accountSettledAt = null, remainingTicks = 0, lastMarketMode = null;
+let execution = null; // 伺服器宣告的市價單流動性；舊版伺服器無此欄就維持原 MAX
 // 切換帳戶/登出後，舊請求不可覆蓋新畫面。
 const currentRequest = epoch => epoch === modeEpoch && mode === "server";
 
@@ -36,7 +37,7 @@ function resetModeFlags() {
   // 不同模式的商品清單不同（戰役只有外匯），切換時要重建左側清單。
   const list = document.getElementById("pairList"); if (list) delete list.dataset.built;
   modeEpoch++; busy = false; catchingUp = false; lastOk = 0;
-  progress = null; resets = 0; settledPrices = null; accountSettledAt = null; remainingTicks = 0; serverMarketMode = "shared"; switchStatus = "ready"; lastMarketMode = null;
+  progress = null; resets = 0; settledPrices = null; execution = null; accountSettledAt = null; remainingTicks = 0; serverMarketMode = "shared"; switchStatus = "ready"; lastMarketMode = null;
   battleAuto = false; lastLossTrack = 0; warned.clear(); closeRisk();
 }
 
@@ -153,7 +154,7 @@ function renderPairs() {
   });
 }
 
-function selectPair(p) { ui.pair = p; renderAll(); }
+function selectPair(p) { ui.pair = p; if ($("marginInput")?.dataset.maxOrder === "1") { const v = maxMargin(market.prices()); ui.margin = v; $("marginInput").value = v; } renderAll(); }
 
 /* ---------- 帳戶 ---------- */
 function renderAccount(prices) {
@@ -257,7 +258,7 @@ function renderOrder(prices, m) {
   $("leverageRange").style.setProperty("--progress", `${levIndex / (E.LEVERAGES.length - 1) * 100}%`);
   $("leverageNotice").classList.toggle("hidden", lev < 50);
   $("notional").textContent = money(notional);
-  $("tradeFee").textContent = money(E.feeFor(notional, lev));
+  $("tradeFee").textContent = money(E.feeFor(notional, lev)) + (mode === "server" && execution ? "＋成交價差／滑價" : "");
   $("riskPercent").textContent = (E.LIQ_LOSS / lev * 100).toFixed(2) + "%";
   const fake = side => E.liquidationPrice({ pair: p, side, leverage: lev, entry: price });
   $("liqPreview").textContent = `${fake(1).toFixed(digits(p))} / ${fake(-1).toFixed(digits(p))}`;
@@ -267,7 +268,9 @@ function renderOrder(prices, m) {
 
 function maxMargin(prices) {
   const valuation = mode === "server" && settledPrices ? settledPrices : prices;
-  return E.maxAffordableMargin(E.freeMargin(state, valuation), ui.leverage);
+  const affordable = E.maxAffordableMargin(E.freeMargin(state, valuation), ui.leverage);
+  const depth = mode === "server" ? execution?.maxNotional?.[ui.pair] : null;
+  return depth ? Math.min(affordable, Math.floor(depth / ui.leverage * 100) / 100) : affordable;
 }
 
 async function order(side) {
@@ -769,6 +772,7 @@ function applyServer(v) {
   catchingUp = !!v.catchingUp;
   remainingTicks = v.remainingTicks || 0;
   serverMarketMode = v.marketMode || "legacy";
+  execution = v.execution || null;
   switchStatus = v.switchStatus || "ready";
   settledPrices = v.accountValuation?.prices || null;
   accountSettledAt = v.accountSettledAt || null;
@@ -848,7 +852,7 @@ function renderModeBadge() {
   $("accountModeChip").textContent = server ? serverMarketMode === "legacy" ? "舊持倉・暫停新開倉" : catchingUp ? "共同行情・帳戶補算中" : "共同行情・登入帳戶" : "訪客模式・不計成績";
   $("guestNote").classList.toggle("hidden", server);
   $("pauseBtn").classList.toggle("hidden", server);
-  $("dataStatus").textContent = server ? catchingUp ? `帳戶已結算至 ${accountSettledAt ? new Date(accountSettledAt).toLocaleString("zh-TW") : "較早時段"}，尚差 ${remainingTicks} 根` : serverMarketMode === "legacy" ? "舊持倉沿用個人行情" : "所有登入玩家同價・1.5 秒更新" : (ui.paused ? "已暫停" : "每 1.5 秒更新");
+  $("dataStatus").textContent = server ? catchingUp ? `帳戶已結算至 ${accountSettledAt ? new Date(accountSettledAt).toLocaleString("zh-TW") : "較早時段"}，尚差 ${remainingTicks} 根` : serverMarketMode === "legacy" ? "舊持倉沿用個人行情" : execution ? "共用行情・市價單含價差/滑價・槓桿融資計息" : "所有登入玩家同價・1.5 秒更新" : (ui.paused ? "已暫停" : "每 1.5 秒更新");
 }
 
 function bind() {

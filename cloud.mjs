@@ -1,5 +1,5 @@
 // 帳號與伺服器端遊戲 API。token 存在 localStorage，以 Authorization: Bearer 傳給後端。
-import { API_BASE } from "./config.mjs?v=20261016e";
+import { API_BASE } from "./config.mjs?v=20261016f";
 
 const AUTH_KEY = "fxweb.auth.v1";
 export const enabled = () => !!API_BASE;

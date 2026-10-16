@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as E from '../../engine.mjs';
 import { PAIRS, CRYPTO_KEYS, FX_KEYS, EVENT_TYPES, pickEvent, eventShape, EVENT_SPAN, priceDigits, createMarket, createMarketState, stepMarket, makeRng } from '../../market.mjs';
-import { makeSharedMarket, sharedPricer, EVENT_START, EVENT_BUCKET } from '../src/shared-market.js';
+import { makeSharedMarket, sharedPricer, EVENT_START, EVENT_BUCKET, WHALE_START, WHALE_CAPITAL } from '../src/shared-market.js';
 import { newGame, advance, openOrder, TICK_MS } from '../src/game.js';
 
 const secret = '77'.repeat(32);
@@ -39,7 +39,25 @@ test('外匯不被重大事件改寫：開始後一年的黃金對照報價不�
   assert.equal(at(EVENT_START + 2500, 'AUD/USD'), 0.659758067234897);
   assert.equal(at(EVENT_START + 2500, 'USD/JPY'), 149.8237980364051);
   for (const e of findEvents(EVENT_START, EVENT_START + 57600))
-    assert.ok(!Object.keys(e.moves).some(p => FX_KEYS.includes(p)), `外匯不可被 ${e.event} 改寫`);
+    if (e.event !== 'whale-sweep') assert.ok(!Object.keys(e.moves).some(p => FX_KEYS.includes(p)), `舊事件不可改寫外匯`);
+});
+
+test('大戶掃盤：資金高於舊榜首、尚未開始時無訊號，開始後短暫洗價且不洩漏未來', () => {
+  assert.ok(WHALE_CAPITAL > 1.3e15);
+  assert.equal(findEvents(WHALE_START - 1000, WHALE_START - 1).filter(e => e.event === 'whale-sweep').length, 0);
+  const e = findEvents(WHALE_START, WHALE_START + 57600).find(n => n.event === 'whale-sweep');
+  assert.ok(e && FX_KEYS.includes(e.pair));
+  assert.ok(!makeSharedMarket(secret,e.step-1,{history:1}).news.some(n=>n.event==='whale-sweep'&&n.step===e.step));
+  const at=sharedPricer(secret);
+  assert.ok(Math.abs(at(e.step,e.pair)/at(e.step-1,e.pair)-1) > .004);
+  assert.ok(Math.abs(Math.log(at(e.step+100,e.pair)/at(e.step+99,e.pair))) < .01);
+  // 反方向的散戶開 100× 空單，先被提醒，下一根可能被洗出場。
+  if (e.moves[e.pair] > 0) {
+    const openedAt=(e.step-1)*TICK_MS,g=newGame(openedAt,secret);
+    openOrder(g,{pair:e.pair,side:-1,leverage:100,margin:1000},openedAt,secret);
+    const r=advance(g,(e.step+2)*TICK_MS,secret);
+    assert.ok(r.events.some(v=>v.type==='liquidated'&&v.pair===e.pair));
+  }
 });
 
 test('事件形狀：瞬間跳到底、維持、再回到 0', () => {
@@ -139,7 +157,7 @@ test('登入帳戶 MAX：依送單當刻的真實可用額度重算，多空均�
 });
 
 test('資產超過 10 億時仍可下單（以前會誤報「保證金至少 $10」）', () => {
-  const t0 = 1800000000000, g = newGame(t0, secret);
+  const t0 = Date.UTC(2026, 9, 16, 3, 0), g = newGame(t0, secret);
   g.account.cash = 5e9; g.account.startingCash = 10000;
   const pos = openOrder(g, { pair: 'EUR/USD', side: 1, leverage: 2, margin: 2e9 }, t0, secret);
   assert.equal(pos.margin, 2e9);

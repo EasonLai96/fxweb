@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createMarketState } from '../../market.mjs';
 import { absoluteTick, sharedPrice } from '../src/shared-market.js';
+import { EXECUTION_START, maxMarketNotional, executionPrice } from '../src/execution.js';
 import { newGame, ensureMarketMode, advance, openOrder, closeOrder, view, resetGame, TICK_MS, MAX_CATCHUP, MAX_HOLD_MS } from '../src/game.js';
 
 const secret = 'ab'.repeat(32);
@@ -20,8 +21,31 @@ test('shared accounts store no personal market or global secret, candles show sa
   assert.equal(v.marketMode, 'shared');
   assert.deepEqual(v.candles, w.candles);
   assert.equal(v.prices[pair], w.prices[pair]);
-  assert.equal(v.account.positions[0].entry, sharedPrice(secret, a.cursor, pair));
+  assert.equal(v.account.positions[0].midAtOpen, sharedPrice(secret, a.cursor, pair));
+  assert.ok(v.account.positions[0].entry > v.account.positions[0].midAtOpen, '市價做多以 ask 成交');
   assert.equal(v.switchStatus, 'ready');
+});
+
+test('新規則只影響生效後新倉：方向價差、滑價、分批流動性、融資及舊倉不變', () => {
+  const before = EXECUTION_START - TICK_MS, old = newGame(before, secret);
+  const oldPos = openOrder(old, {pair, side:1, leverage:100, margin:100}, before, secret);
+  assert.equal(oldPos.entry, sharedPrice(secret, absoluteTick(before), pair));
+  assert.equal(oldPos.executionVersion, undefined);
+  const t = EXECUTION_START + TICK_MS;
+  const g = newGame(t, secret), mid = sharedPrice(secret, absoluteTick(t), pair);
+  const long = openOrder(g, {pair, side:1, leverage:100, margin:100}, t, secret);
+  const short = openOrder(g, {pair, side:-1, leverage:100, margin:100}, t, secret);
+  assert.ok(long.entry > mid && short.entry < mid);
+  assert.ok(executionPrice(mid, pair, 1, 1e8, t) > long.entry, '大單比小單成交較差');
+  assert.throws(() => openOrder(g, {pair, side:1, leverage:100, margin:1e7}, t, secret), /單筆流動性不足/);
+  const later=t+TICK_MS;
+  advance(g, later, secret);
+  assert.ok(long.carryPaid>0 && short.carryPaid>0);
+  const pnl=closeOrder(g,long.id,later,secret);
+  assert.ok(g.account.log.at(-1).price < sharedPrice(secret,absoluteTick(later),pair), '多單以 bid 賣出');
+  assert.ok(Number.isFinite(pnl));
+  const limit=maxMarketNotional('BTC');
+  assert.ok(limit < maxMarketNotional(pair), '虛擬幣深度小於外匯');
 });
 
 test('behind account values at cursor, but displays head tape separately and disallows trading', () => {
@@ -53,7 +77,7 @@ test('7-day shared expiry settles at historical tick, original entry and PnL, th
   const last = a.account.log.at(-1);
   assert.equal(last.reason, 'expired');
   assert.equal(last.t, t);
-  assert.equal(last.price, sharedPrice(secret, absoluteTick(t), pair));
+  assert.ok(last.price < sharedPrice(secret, absoluteTick(t), pair), '買進倉位以 bid 平倉');
   assert.equal(a.account.cash, 10000 - pos.feePaid + last.pnl);
   assert.equal(r.events.at(-1).type, 'expired');
   assert.equal(a.progress.stats.closedTrades, 1);
