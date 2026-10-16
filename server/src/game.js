@@ -4,6 +4,7 @@ import * as E from "../../engine.mjs";
 import { ensureProgress, recordOpen, recordClose, resetProgress, progressView } from "./progress.js";
 import { createMarketState, secureMarketState, stepMarket, publicNews, PAIRS, NEWS_SETTLE } from "../../market.mjs";
 import { absoluteTick, makeSharedMarket, sharedPricer } from "./shared-market.js";
+import { SENTIMENT_START, sentimentAt } from "./sentiment.js";
 import { EXECUTION_START, EXECUTION_VERSION, maxMarketNotional, executionPrice, carryCharge } from "./execution.js";
 
 export const TICK_MS = 1500;
@@ -27,8 +28,8 @@ function secretRequired(secret) {
 }
 function shared(g) { return g.marketMode === 'shared'; }
 function cursor(g) { return shared(g) ? g.cursor : g.market.step; }
-function tickPrices(secret, tick, only = pairs, pricer = null) {
-  const at = pricer || sharedPricer(secret);
+function tickPrices(secret, tick, only = pairs, pricer = null, sentiment = null) {
+  const at = pricer || sharedPricer(secret, sentiment);
   return Object.fromEntries(only.map(pair => [pair, at(tick, pair)]));
 }
 // 帳戶結算只需要「有持倉的商品」的價格；其他商品不影響保證金、強平或淨值。
@@ -168,7 +169,7 @@ function advanceLegacy(g, now) {
   g.lastStepAt += n * TICK_MS;
   return { steps: n, events, skipped: due > n, pendingSteps: due - n };
 }
-function advanceShared(g, now, marketSecret) {
+function advanceShared(g, now, marketSecret, sentiment) {
   secretRequired(marketSecret);
   if (!Number.isSafeInteger(g.cursor) || g.cursor < 0) throw new Error('Invalid shared cursor');
   const head = absoluteTick(now), due = Math.max(0, head - g.cursor);
@@ -180,11 +181,11 @@ function advanceShared(g, now, marketSecret) {
     if (due) saveEquity(a, {}, head);
     return { steps: 0, fastForwarded: due, events, skipped: false, pendingSteps: 0 };
   }
-  const n = Math.min(due, MAX_CATCHUP), pricer = sharedPricer(marketSecret);
+  const n = Math.min(due, MAX_CATCHUP), pricer = sharedPricer(marketSecret, sentiment);
   for (let i = 1; i <= n; i++) {
     const tick = g.cursor + i;
     // 只算持倉商品；結算中途被強平的商品下一根自然就不再計算。
-    settle(g, tickPrices(marketSecret, tick, heldPairs(a), pricer), tick * TICK_MS, tick, events, true);
+    settle(g, tickPrices(marketSecret, tick, heldPairs(a), pricer, sentiment), tick * TICK_MS, tick, events, true);
     if (!a.positions.length) {
       // All positions have just settled at their historical tick. Skipping the
       // remainder now is safe, but never settle them at today's head price.
@@ -197,13 +198,13 @@ function advanceShared(g, now, marketSecret) {
   trimAccount(a);
   return { steps: n, events, skipped: due > n, pendingSteps: due - n };
 }
-export function advance(g, now, marketSecret) {
+export function advance(g, now, marketSecret, sentiment) {
   if (!Number.isFinite(now) || now < 0) throw new Error('Invalid game clock');
   ensureProgress(g, now);
   // 借款利息按帳戶實際推進的 K 線根數累加（與帳戶結算同步）。無借款時為 no-op。
   const before = cursor(g);
   let result;
-  if (shared(g)) result = advanceShared(g, now, marketSecret);
+  if (shared(g)) result = advanceShared(g, now, marketSecret, sentiment);
   else { ensureSecureGame(g); result = advanceLegacy(g, now); }
   E.accrueLoan(g.account, cursor(g) - before);
   return result;
@@ -218,11 +219,11 @@ function requireCaughtUp(g, now) {
   if (!Number.isFinite(now) || remaining(g, now) > 0) throw new GameError('行情補算中，請追平後再交易');
 }
 // extra：除了持倉商品外還需要的商品（例如要開倉的那一檔）。
-function accountPrices(g, secret, extra = []) {
-  if (shared(g)) { secretRequired(secret); return tickPrices(secret, g.cursor, [...new Set([...heldPairs(g.account), ...extra])]); }
+function accountPrices(g, secret, extra = [], sentiment) {
+  if (shared(g)) { secretRequired(secret); return tickPrices(secret, g.cursor, [...new Set([...heldPairs(g.account), ...extra])], null, sentiment); }
   return { ...g.market.prices };
 }
-export function openOrder(g, { pair, side, leverage, margin, max = false }, now, marketSecret) {
+export function openOrder(g, { pair, side, leverage, margin, max = false }, now, marketSecret, sentiment) {
   requireCaughtUp(g, now);
   if (!shared(g) && marketSecret !== undefined) throw new GameError('舊市場停止開倉；請先平掉舊持倉以切換全球市場');
   if (typeof pair !== 'string' || !Object.prototype.hasOwnProperty.call(PAIRS, pair)) throw new GameError('不支援的商品');
@@ -234,7 +235,7 @@ export function openOrder(g, { pair, side, leverage, margin, max = false }, now,
   if (margin < 10) throw new GameError('保證金至少 $10');
   if (g.account.positions.length >= MAX_POSITIONS) throw new GameError(`最多同時持有 ${MAX_POSITIONS} 筆`);
   margin = Math.floor(margin * 100) / 100;
-  const prices = accountPrices(g, marketSecret, [pair]);
+  const prices = accountPrices(g, marketSecret, [pair], sentiment);
   // MAX 用即時伺服器估值計算；送單與前端按 MAX 間可能已過數根行情，
   // 不能拿舊顯示值直接當保證金，尤其是高槓桿、大額持倉。
   const realistic = shared(g) && now >= EXECUTION_START;
@@ -262,11 +263,11 @@ export function openOrder(g, { pair, side, leverage, margin, max = false }, now,
   trimAccount(g.account);
   return r.position;
 }
-export function closeOrder(g, id, now, marketSecret) {
+export function closeOrder(g, id, now, marketSecret, sentiment) {
   requireCaughtUp(g, now);
   const pos = g.account.positions.find(p => p.id === id);
   if (!pos) throw new GameError('找不到持倉（可能已被強制平倉）');
-  const prices = accountPrices(g, marketSecret);
+  const prices = accountPrices(g, marketSecret, [], sentiment);
   settleCarry(g.account, now);
   const r = E.closePosition(g.account, id, closeFill(pos, prices[pos.pair], now), now);
   recordClose(g, pos, r.pnl, 'manual', now);
@@ -291,12 +292,12 @@ export function repayLoan(g, amount, now) {
 }
 
 // 風險提醒的三個選項：補保證金（source='cash'，從可用保證金撥入）、借款補倉（source='loan'）、暫不處理。
-export function addPositionMargin(g, id, amount, source, now, marketSecret) {
+export function addPositionMargin(g, id, amount, source, now, marketSecret, sentiment) {
   requireCaughtUp(g, now);
   if (!Number.isSafeInteger(id)) throw new GameError('持倉編號無效');
   if (typeof amount !== 'number' || !Number.isFinite(amount)) throw new GameError('補倉金額無效');
   if (source !== 'cash' && source !== 'loan') throw new GameError('補倉來源錯誤');
-  const prices = accountPrices(g, marketSecret);
+  const prices = accountPrices(g, marketSecret, [], sentiment);
   const r = source === 'loan'
     ? E.borrowToMargin(g.account, prices, id, amount, now)
     : E.addMargin(g.account, prices, id, amount, now);
@@ -325,9 +326,9 @@ export function resetGame(g, now = g.lastStepAt, marketSecret) {
 
 // Head tape is live even while the account is still processing historical
 // ticks. accountValuation uses the SETTLED cursor, never the head quote.
-export function view(g, since, events = [], now = Date.now(), marketSecret) {
+export function view(g, since, events = [], now = Date.now(), marketSecret, sentiment) {
   const isShared = shared(g);
-  const m = isShared ? makeSharedMarket(marketSecret, absoluteTick(now), { since }) : g.market;
+  const m = isShared ? makeSharedMarket(marketSecret, absoluteTick(now), { since, sentiment }) : g.market;
   const step = m.step, full = !(Number.isSafeInteger(since) && since >= 0 && since <= step && step - since < m.history);
   const candles = {};
   // 舊私有行情沒有 ETF：只回傳它實際有的商品，避免對 undefined 呼叫 filter 而整個 API 500。
@@ -335,7 +336,7 @@ export function view(g, since, events = [], now = Date.now(), marketSecret) {
   const a = g.account, pending = remaining(g, now);
   const settledStep = cursor(g);
   // 補算中（帳戶落後行情）時，帳戶估值只需要持倉商品在結算點的價格。
-  const settledPrices = isShared ? (settledStep === step ? m.prices : tickPrices(marketSecret, settledStep, heldPairs(a))) : m.prices;
+  const settledPrices = isShared ? (settledStep === step ? m.prices : tickPrices(marketSecret, settledStep, heldPairs(a), null, sentiment)) : m.prices;
   const headPrices = { ...m.prices };
   const newsFrom = full ? -Infinity : since - NEWS_SETTLE - 1;
   return {
@@ -349,6 +350,7 @@ export function view(g, since, events = [], now = Date.now(), marketSecret) {
     catchingUp: pending > 0, remainingTicks: pending, catchupBatchTicks: MAX_CATCHUP,
     nextTickIn: isShared ? Math.max(0, (step + 1) * TICK_MS - now) : Math.max(0, g.lastStepAt + TICK_MS - now),
     prices: headPrices, candles,
+    sentiment: isShared && step >= SENTIMENT_START ? Object.fromEntries(pairs.map(p => [p, sentimentAt(sentiment, step, p)])) : null,
     execution: isShared && now >= EXECUTION_START ? {
       mode: '示意市價成交', version: EXECUTION_VERSION, maxNotional: Object.fromEntries(pairs.map(p => [p, maxMarketNotional(p)])),
       note: '價格有買賣價差及大單滑價，借用槓桿資金按真實時間計息。單筆市價單有流動性上限；可拆單。非真實券商費率。',

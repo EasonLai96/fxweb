@@ -2,6 +2,9 @@ name = "fxweb-api"
 main = "src/index.js"
 compatibility_date = "2024-09-23"
 
+[triggers]
+crons = ["*/1 * * * *"]
+
 [vars]
 # 允許呼叫 API 的前端網址（逗號分隔）
 ALLOWED_ORIGINS = "https://easonlai96.github.io"

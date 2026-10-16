@@ -1,13 +1,13 @@
-import { initExtras } from "./extras.mjs?v=20261016f";
-import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261016f";
-import * as E from "./engine.mjs?v=20261016f";
-import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261016f";
-import * as Store from "./store.mjs?v=20261016f";
-import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261016f";
-import * as Cloud from "./cloud.mjs?v=20261016f";
-import { createRemoteMarket } from "./remote.mjs?v=20261016f";
-import { createAchievementBook } from "./achievements.mjs?v=20261016f";
-import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261016f";
+import { initExtras } from "./extras.mjs?v=20261016g";
+import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261016g";
+import * as E from "./engine.mjs?v=20261016g";
+import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261016g";
+import * as Store from "./store.mjs?v=20261016g";
+import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261016g";
+import * as Cloud from "./cloud.mjs?v=20261016g";
+import { createRemoteMarket } from "./remote.mjs?v=20261016g";
+import { createAchievementBook } from "./achievements.mjs?v=20261016g";
+import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261016g";
 
 const THEME_KEY = "fxweb.theme";
 // 兩種模式：
@@ -22,6 +22,7 @@ let modeEpoch = 0, catchingUp = false;
 let progress = null, resets = 0, extras = null, leaderUI = null;
 let serverMarketMode = "shared", switchStatus = "ready", settledPrices = null, accountSettledAt = null, remainingTicks = 0, lastMarketMode = null;
 let execution = null; // 伺服器宣告的市價單流動性；舊版伺服器無此欄就維持原 MAX
+let sentiment = null; // 前一格已封存的玩家多空人數與遊戲模型機率
 // 切換帳戶/登出後，舊請求不可覆蓋新畫面。
 const currentRequest = epoch => epoch === modeEpoch && mode === "server";
 
@@ -37,7 +38,7 @@ function resetModeFlags() {
   // 不同模式的商品清單不同（戰役只有外匯），切換時要重建左側清單。
   const list = document.getElementById("pairList"); if (list) delete list.dataset.built;
   modeEpoch++; busy = false; catchingUp = false; lastOk = 0;
-  progress = null; resets = 0; settledPrices = null; execution = null; accountSettledAt = null; remainingTicks = 0; serverMarketMode = "shared"; switchStatus = "ready"; lastMarketMode = null;
+  progress = null; resets = 0; settledPrices = null; execution = null; sentiment = null; accountSettledAt = null; remainingTicks = 0; serverMarketMode = "shared"; switchStatus = "ready"; lastMarketMode = null;
   battleAuto = false; lastLossTrack = 0; warned.clear(); closeRisk();
 }
 
@@ -230,6 +231,10 @@ function renderChart() {
   const p = ui.pair, cs = market.candles(p), last = cs[cs.length - 1], ch = change(p);
   $("pairTitle").textContent = spaced(p);
   $("pairName").textContent = PAIR_NAMES[p] + (kindOf(p) !== "fx" ? `・${ccyTag(p)} 計價` : "");
+  const crowd = sentiment?.[p], info = $("sentimentInfo");
+  info.hidden = !crowd;
+  if (crowd) info.textContent = `玩家多 ${crowd.long} 人／空 ${crowd.short} 人・模型偏向上漲權重 ${(crowd.upProbability * 100).toFixed(1)}%（${crowd.snapshotBucket === null ? '快照尚未建立，維持中性' : '採前一格快照；至少 3 人才影響行情'}）`;
+
   $("currentPrice").textContent = last.c.toFixed(digits(p));
   $("currentPrice").className = signCls(last.c - last.o);
   $("priceChange").textContent = pct(ch); $("priceChange").className = signCls(ch);
@@ -773,6 +778,7 @@ function applyServer(v) {
   remainingTicks = v.remainingTicks || 0;
   serverMarketMode = v.marketMode || "legacy";
   execution = v.execution || null;
+  sentiment = v.sentiment || null;
   switchStatus = v.switchStatus || "ready";
   settledPrices = v.accountValuation?.prices || null;
   accountSettledAt = v.accountSettledAt || null;

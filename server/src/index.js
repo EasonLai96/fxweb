@@ -1,6 +1,7 @@
 import { ensureProgress } from "./progress.js";
 import { joinSeason, leaveSeason, updateSeasonScore, seasonParticipationView, publicLeaderboard } from "./leaderboard.js";
-import { sharedPricer } from "./shared-market.js";
+import { sharedPricer, absoluteTick } from "./shared-market.js";
+import { captureSentiment, loadSnapshots, SENTIMENT_START } from "./sentiment.js";
 // fxweb 後端：Cloudflare Worker + D1。帳號密碼登入、救援碼重設密碼、伺服器端計算的遊戲。
 // 密碼：PBKDF2-SHA256（Workers 上限 100000 次迭代）+ 每人隨機 salt。
 // 登入憑證：隨機 token，以 Authorization: Bearer 傳遞；資料庫只存 token 的 SHA-256。
@@ -256,20 +257,27 @@ function sharedSecret(env) {
     throw new Error("Shared market secret is not configured");
   return env.SHARED_MARKET_SECRET;
 }
-function serverPrices(g, secret) {
+function serverPrices(g, secret, sentiment) {
   if (g.marketMode !== 'shared') return g.market.prices;
   // 排行榜成績只需要持倉商品的價格（updateSeasonScore 只檢查持倉商品）。
-  const at = sharedPricer(secret), held = [...new Set(g.account.positions.map(p => p.pair))];
+  const at = sharedPricer(secret, sentiment), held = [...new Set(g.account.positions.map(p => p.pair))];
   return Object.fromEntries(held.map(pair => [pair, at(g.cursor, pair)]));
 }
 async function withGame(env, userId, mutate, request = null) {
   const secret = sharedSecret(env);
+  const head = absoluteTick(now());
+  // Head candles and historical settlement may be far apart; load two small ranges.
+  const sentiment = head >= SENTIMENT_START ? await loadSnapshots(env, Math.max(0, head - 180), head) : new Map();
   for (let attempt = 0; attempt < 4; attempt++) {
     const t = now();
     const row = await env.DB.prepare("SELECT state, version FROM games WHERE user_id = ?").bind(userId).first();
     let g, version = 0;
     if (row) { g = JSON.parse(row.state); version = row.version; }
     else g = newGame(t, secret);
+    if (g.marketMode === 'shared' && g.account.positions.length && g.cursor < head - 180) {
+      const older = await loadSnapshots(env, g.cursor, Math.min(head, g.cursor + 601));
+      for (const [bucket, counts] of older) sentiment.set(bucket, counts);
+    }
     const progressUpgraded = ensureProgress(g, t);
     const modeUpgraded = ensureMarketMode(g, t, secret);
     const secureUpgraded = ensureSecureGame(g);
@@ -279,10 +287,10 @@ async function withGame(env, userId, mutate, request = null) {
     if (previous && previous.fingerprint !== request.fingerprint)
       throw new HttpError(409, "request_conflict", "requestId 已用於不同操作");
     const before = g.marketMode === 'shared' ? g.cursor : g.market.step;
-    const adv = advance(g, t, secret);
+    const adv = advance(g, t, secret, sentiment);
     upgraded = ensureMarketMode(g, t, secret) || upgraded;
     const catchingUp = adv.pendingSteps > 0;
-    const result = previous ? previous.result : mutate && !catchingUp ? mutate(g, t, secret) : null;
+    const result = previous ? previous.result : mutate && !catchingUp ? mutate(g, t, secret, sentiment) : null;
     upgraded = ensureMarketMode(g, t, secret) || upgraded;
     if (request && !previous && !catchingUp) {
       // 深拷貝結果，不讓之後行情或平倉更動已提交的回執。
@@ -293,7 +301,7 @@ async function withGame(env, userId, mutate, request = null) {
     // instead of rebuilding from their creation tick on every subsequent request.
     const changed = !row || upgraded || catchingUp || (!!mutate && !previous) || adv.events.length > 0 || after - before >= PERSIST_EVERY;
     if (changed) {
-      if (!catchingUp && g.seasonParticipation?.status === 'active') updateSeasonScore(g, serverPrices(g, secret), t);
+      if (!catchingUp && g.seasonParticipation?.status === 'active') updateSeasonScore(g, serverPrices(g, secret, sentiment), t);
       const text = JSON.stringify(g);
       let ok;
       if (!row) ok = await env.DB.prepare("INSERT INTO games (user_id, state, version, updated_at) VALUES (?, ?, 1, ?) ON CONFLICT(user_id) DO NOTHING RETURNING version").bind(userId, text, t).first();
@@ -301,7 +309,7 @@ async function withGame(env, userId, mutate, request = null) {
       if (!ok) continue; // 被另一個請求搶先寫入，重新讀取再算一次
     }
     if (mutate && !previous && catchingUp) throw new HttpError(409, "catching_up", "行情補算中，請稍後用相同 requestId 重試", { remainingTicks: adv.pendingSteps });
-    return { g, events: adv.events, result, t };
+    return { g, events: adv.events, result, t, sentiment };
   }
   throw new HttpError(409, "busy", "操作太頻繁，請再試一次");
 }
@@ -312,8 +320,8 @@ async function gameState(req, env) {
   const user = await requireUser(req, env);
   await consumeRate(env, "game-read:" + user.id, 120, 60000);
   const since = sinceOf(req);
-  const { g, events, t } = await withGame(env, user.id, null);
-  return { status: 200, body: view(g, since, events, t, sharedSecret(env)) };
+  const { g, events, t, sentiment } = await withGame(env, user.id, null);
+  return { status: 200, body: view(g, since, events, t, sharedSecret(env), sentiment) };
 }
 
 async function gameAction(req, env, fn) {
@@ -331,19 +339,19 @@ async function gameAction(req, env, fn) {
     id: body.requestId, fingerprint: await sha256hex(path + ":" + canonicalJson(payload)),
   };
   try {
-    const { g, events, result, t } = await withGame(env, user.id, (g, t, secret) => fn(g, body, t, secret), request);
-    return { status: 200, body: { ...view(g, since, events, t, sharedSecret(env)), result } };
+    const { g, events, result, t, sentiment } = await withGame(env, user.id, (g, t, secret, crowd) => fn(g, body, t, secret, crowd), request);
+    return { status: 200, body: { ...view(g, since, events, t, sharedSecret(env), sentiment), result } };
   } catch (e) {
     if (e instanceof GameError) throw new HttpError(400, "game_error", e.message);
     throw e;
   }
 }
 
-const gameOpen = (req, env) => gameAction(req, env, (g, b, t, secret) => {
-  const pos = openOrder(g, { pair: b.pair, side: b.side, leverage: b.leverage, margin: b.margin, max: b.max === true }, t, secret);
+const gameOpen = (req, env) => gameAction(req, env, (g, b, t, secret, sentiment) => {
+  const pos = openOrder(g, { pair: b.pair, side: b.side, leverage: b.leverage, margin: b.margin, max: b.max === true }, t, secret, sentiment);
   return { opened: pos };
 });
-const gameClose = (req, env) => gameAction(req, env, (g, b, t, secret) => ({ closed: b.id, pnl: closeOrder(g, b.id, t, secret) }));
+const gameClose = (req, env) => gameAction(req, env, (g, b, t, secret, sentiment) => ({ closed: b.id, pnl: closeOrder(g, b.id, t, secret, sentiment) }));
 const gameReset = (req, env) => gameAction(req, env, (g, b, t, secret) => {
   leaveSeason(g, t);
   resetGame(g, t, secret);
@@ -351,7 +359,7 @@ const gameReset = (req, env) => gameAction(req, env, (g, b, t, secret) => {
 });
 const gameBorrow = (req, env) => gameAction(req, env, (g, b, t) => ({ borrowed: borrowLoan(g, b.amount, t) }));
 const gameRepay = (req, env) => gameAction(req, env, (g, b, t) => ({ repaid: repayLoan(g, b.amount, t) }));
-const gameMargin = (req, env) => gameAction(req, env, (g, b, t, secret) => ({ margin: addPositionMargin(g, b.id, b.amount, b.source, t, secret) }));
+const gameMargin = (req, env) => gameAction(req, env, (g, b, t, secret, sentiment) => ({ margin: addPositionMargin(g, b.id, b.amount, b.source, t, secret, sentiment) }));
 const gameRefuse = (req, env) => gameAction(req, env, (g, b, t) => ({ refused: refuseHelp(g, b.id, t) }));
 async function leaderboardList(req, env) {
   await consumeRate(env, "board-ip:" + (req.headers.get("CF-Connecting-IP") || "local"), 90, 60000);
@@ -425,6 +433,7 @@ const ROUTES = {
 };
 
 export default {
+  async scheduled(event, env) { await captureSentiment(env, event.scheduledTime); },
   async fetch(req, env) {
     const url = new URL(req.url);
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(req, env) });

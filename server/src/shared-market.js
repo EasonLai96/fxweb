@@ -1,6 +1,7 @@
 // Fictional shared tape. The 256-bit secret must come ONLY from Worker env.
 // No secret, HMAC digest or future news result belongs in D1, API or logs.
 import { hmacKey, PAIRS, INSTRUMENTS, isEtf, NEWS_SETTLE, FX_KEYS, ETF_KEYS, CRYPTO_KEYS, volOf, pickEvent, eventShape, EVENT_SPAN } from '../../market.mjs';
+import { sentimentLog } from './sentiment.js';
 export const TICK_MS = 1500;
 export const SHARED_MARKET_ALGORITHM = 'fxweb/shared/hmac-sha256-causal-v1';
 // PAIR_KEYS 包含 ETF（價格、K 線都會算）。新聞則分兩條獨立的 HMAC 串流：
@@ -68,7 +69,7 @@ export function absoluteTick(now = Date.now()) {
 }
 export const tickAt = absoluteTick;
 // Request-scoped memo; prices at t consume ONLY HMAC domains timestamped <= t.
-function context(secret) {
+function context(secret, sentiment) {
   const mac = hmacKey(keyBytes(secret)), digests = new Map(), quotes = new Map(), bars = new Map(), reports = new Map();
   function digest(domain,t,p='') {
     const id = `${domain}|${t}|${p}`;
@@ -83,7 +84,7 @@ function context(secret) {
     checkTick(t); checkPair(p);
     const id=`${t}|${p}`;
     if (quotes.has(id)) return quotes.get(id);
-    if (isEtf(p) && t>ETF_SWITCH) { const v=etfPrice(t,p); quotes.set(id,v); return v; }
+    if (isEtf(p) && t>ETF_SWITCH) { let v=etfPrice(t,p); const tilt=sentimentLog(sentiment,t,p); if (tilt) v*=Math.exp(tilt); quotes.set(id,v); return v; }
     const start=Math.floor(t/SPAN)*SPAN, x=(t-start)/SPAN, smooth=x*x*(3-2*x);
     // The current anchor first becomes available at 'start'; never read the NEXT anchor.
     const trend=anchor(start-SPAN,p)*(1-smooth)+anchor(start,p)*smooth;
@@ -95,6 +96,7 @@ function context(secret) {
     const shock=t>=EVENT_START ? shockLog(t,p) : 0;
     const whale=t>=WHALE_START ? whaleLog(t,p) : 0;
     if (shock || whale) result*=Math.exp(shock+whale);
+    const tilt=sentimentLog(sentiment,t,p); if (tilt) result*=Math.exp(tilt);
     quotes.set(id,result); return result;
   }
   // ===== ETF：比照真實市場（照真實日曆）=====
@@ -246,16 +248,16 @@ function context(secret) {
 export function sharedPrice(secret,tick,pair) { return context(secret).price(tick,pair); }
 // 一個請求內重複查價用：共用同一份 HMAC 快取。補算 600 根時，每根的 3 個 noise
 // 有 2 個是上一根已算過的、anchor 每 64 根才換一次，重複利用後 HMAC 次數降到約 1/3。
-export function sharedPricer(secret) { const c=context(secret); return (tick,pair)=>c.price(tick,pair); }
+export function sharedPricer(secret, sentiment) { const c=context(secret,sentiment); return (tick,pair)=>c.price(tick,pair); }
 export function sharedCandle(secret,tick,pair) { return context(secret).candle(tick,pair); }
 export function sharedNews(secret,tick) { return context(secret).news(tick); }
-export function makeSharedMarket(secret,headTick,{history=160,since}={}) {
+export function makeSharedMarket(secret,headTick,{history=160,since,sentiment}={}) {
   checkTick(headTick);
   if (!Number.isSafeInteger(history)||history<1||history>10000) throw new RangeError('Invalid shared market history');
   // A valid cursor needs only the new bars. In particular, an unchanged head
   // must not recompute the whole tape just to return the current prices.
   const delta=Number.isSafeInteger(since)&&since>=0&&since<=headTick&&headTick-since<history;
-  const req=context(secret), prices={}, candles={};
+  const req=context(secret,sentiment), prices={}, candles={};
   const first=delta ? since+1 : Math.max(0,headTick-history+1);
   for(const pair of PAIR_KEYS) {
     const series=[];
