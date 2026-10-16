@@ -1,13 +1,13 @@
-import { initExtras } from "./extras.mjs?v=20261016j";
-import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261016j";
-import * as E from "./engine.mjs?v=20261016j";
-import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261016j";
-import * as Store from "./store.mjs?v=20261016j";
-import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261016j";
-import * as Cloud from "./cloud.mjs?v=20261016j";
-import { createRemoteMarket } from "./remote.mjs?v=20261016j";
-import { createAchievementBook } from "./achievements.mjs?v=20261016j";
-import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261016j";
+import { initExtras } from "./extras.mjs?v=20261016k";
+import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261016k";
+import * as E from "./engine.mjs?v=20261016k";
+import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261016k";
+import * as Store from "./store.mjs?v=20261016k";
+import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261016k";
+import * as Cloud from "./cloud.mjs?v=20261016k";
+import { createRemoteMarket } from "./remote.mjs?v=20261016k";
+import { createAchievementBook } from "./achievements.mjs?v=20261016k";
+import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261016k";
 
 const THEME_KEY = "fxweb.theme";
 // One random id per tab lifetime; never derive presence from username or IP.
@@ -25,7 +25,7 @@ let modeEpoch = 0, catchingUp = false;
 let progress = null, resets = 0, extras = null, leaderUI = null;
 let serverMarketMode = "shared", switchStatus = "ready", settledPrices = null, accountSettledAt = null, remainingTicks = 0, lastMarketMode = null;
 let execution = null; // 伺服器宣告的市價單流動性；舊版伺服器無此欄就維持原 MAX
-let sentiment = null; // 前一格已封存的玩家多空人數與遊戲模型機率
+let sentiment = null, serverLoanLimit = 0; // 前一格已封存的玩家多空人數與遊戲模型機率
 // 切換帳戶/登出後，舊請求不可覆蓋新畫面。
 const currentRequest = epoch => epoch === modeEpoch && mode === "server";
 
@@ -41,7 +41,7 @@ function resetModeFlags() {
   // 不同模式的商品清單不同（戰役只有外匯），切換時要重建左側清單。
   const list = document.getElementById("pairList"); if (list) delete list.dataset.built;
   modeEpoch++; busy = false; catchingUp = false; lastOk = 0;
-  progress = null; resets = 0; settledPrices = null; execution = null; sentiment = null; accountSettledAt = null; remainingTicks = 0; serverMarketMode = "shared"; switchStatus = "ready"; lastMarketMode = null;
+  progress = null; resets = 0; settledPrices = null; execution = null; sentiment = null; serverLoanLimit = 0; accountSettledAt = null; remainingTicks = 0; serverMarketMode = "shared"; switchStatus = "ready"; lastMarketMode = null;
   battleAuto = false; lastLossTrack = 0; warned.clear(); closeRisk();
 }
 
@@ -191,11 +191,12 @@ function renderBank() {
   $("bankPanel").classList.toggle("has-loan", hasLoan);
   $("bankStatus").textContent = hasLoan ? "借款中" : "無借款";
   $("bankHeroLabel").textContent = hasLoan ? "目前欠款（本金＋利息）" : "可借額度";
-  $("bankHeroValue").textContent = money(hasLoan ? owed : E.LOAN_MAX);
-  $("bankMeter").style.width = (hasLoan ? Math.min(100, owed / E.LOAN_MAX * 100) : 100) + "%";
+  const cap = loanCap();
+  $("bankHeroValue").textContent = money(hasLoan ? owed : cap);
+  $("bankMeter").style.width = (hasLoan ? Math.min(100, owed / cap * 100) : 100) + "%";
   $("loanOwedRow").classList.toggle("hidden", !hasLoan);
   if (l) { $("loanPrincipal").textContent = money(l.principal); $("loanOwed").textContent = money(l.accrued); }
-  $("loanRate").textContent = l ? (l.rateDaily * 100).toFixed(2) + "% / 天" : "依金額分級";
+  $("loanRate").textContent = l ? (l.rateDaily * 100).toFixed(3).replace(/0$/, "") + "% / 天" : "依金額分級";
   $("loanBorrowBtn").disabled = hasLoan;
   $("loanRepayBtn").disabled = !hasLoan;
   document.querySelectorAll(".bank-tier").forEach(b => { b.disabled = hasLoan; });
@@ -219,12 +220,12 @@ function updateBankPreview() {
     tier = E.LOAN_TIERS.findIndex(([, r]) => r === l.rateDaily);
   } else if (raw === "" || !(v > 0)) {
     p.textContent = "每 30 秒計一天，利息只算本金、不利滾利。";
-  } else if (v > E.LOAN_MAX) {
-    p.textContent = `超過單筆上限 ${money(E.LOAN_MAX)}`; p.classList.add("bad");
+  } else if (v > loanCap()) {
+    p.textContent = `超過目前可借上限 ${money(loanCap())}（淨資產 50%）`; p.classList.add("bad");
   } else {
     const rate = E.loanRate(v);
     tier = E.LOAN_TIERS.findIndex(([, r]) => r === rate);
-    p.innerHTML = `日息 <b>${(rate * 100).toFixed(2)}%</b>・每天約 <b>${money(v * rate)}</b>・10 天約 <b>${money(v * rate * 10)}</b>`;
+    p.innerHTML = `日息 <b>${(rate * 100).toFixed(3).replace(/0$/, "")}%</b>・每天約 <b>${money(v * rate)}</b>・10 天約 <b>${money(v * rate * 10)}</b>`;
   }
   document.querySelectorAll(".bank-tier").forEach(b => b.classList.toggle("active", Number(b.dataset.tier) === tier));
 }
@@ -343,21 +344,26 @@ async function resetAll() {
 }
 
 /* ---------- 周轉小金庫（銀行借款） ---------- */
+// 可借上限隨淨資產上升（淨資產 50%，最低 $200,000）。登入時以伺服器結算值為準。
+function loanCap() {
+  if (mode === "server" && serverLoanLimit > 0) return serverLoanLimit;
+  return E.loanLimit(state, mode === "server" && settledPrices ? settledPrices : market.prices());
+}
 async function doBorrow() {
   const amount = Number($("loanAmount").value);
   if (!(amount >= 1)) { toast("借款金額至少 $1", true); return; }
-  if (amount > E.LOAN_MAX) { toast(`單筆借款上限 ${money(E.LOAN_MAX)}`, true); return; }
+  if (amount > loanCap()) { toast(`目前可借上限 ${money(loanCap())}（淨資產 50%，最低 $200,000）`, true); return; }
   if (mode === "server") {
     const r = await serverCall(() => Cloud.game.borrow(amount, market.step()));
     const b = r && r.result && r.result.borrowed;
-    if (b) { clearLoanInput(); toast(`已借入 ${money(b.amount)}・日息 ${(b.rateDaily * 100).toFixed(2)}%`); book.checkAccount({ loanPrincipal: b.amount }); }
+    if (b) { clearLoanInput(); toast(`已借入 ${money(b.amount)}・日息 ${(b.rateDaily * 100).toFixed(3).replace(/0$/, "")}%`); book.checkAccount({ loanPrincipal: b.amount }); }
     return;
   }
-  const r = E.borrow(state, amount, Date.now());
+  const r = E.borrow(state, amount, Date.now(), loanCap());
   if (!r.ok) { toast(r.error, true); return; }
   book.checkAccount({ loanPrincipal: r.amount });
   clearLoanInput();
-  toast(`已借入 ${money(r.amount)}・日息 ${(r.rateDaily * 100).toFixed(2)}%`);
+  toast(`已借入 ${money(r.amount)}・日息 ${(r.rateDaily * 100).toFixed(3).replace(/0$/, "")}%`);
   afterChange();
 }
 
@@ -602,13 +608,13 @@ function updateRiskPreview() {
   else {
     const lp = E.liquidationPrice({ ...pos, margin: pos.margin + amt });
     p.innerHTML = `補 <b>${money(amt)}</b> 後強平價 → <b>${lp.toFixed(digits(pos.pair))}</b>`
-      + (amt <= E.LOAN_MAX ? `・借款日息 ${(E.loanRate(amt) * 100).toFixed(2)}%` : "");
+      + (amt <= loanCap() ? `・借款日息 ${(E.loanRate(amt) * 100).toFixed(3).replace(/0$/, "")}%` : "");
   }
   $("riskAddBtn").disabled = !(amt >= 1) || amt > free + 1e-9;
   $("riskAddBtn").title = amt > free + 1e-9 ? `可用餘額只有 ${money(Math.max(0, free))}` : "";
-  $("riskLoanBtn").disabled = !(amt >= 1) || amt > E.LOAN_MAX || owed > 0;
+  $("riskLoanBtn").disabled = !(amt >= 1) || amt > loanCap() || owed > 0;
   $("riskLoanBtn").title = owed > 0 ? "已有未還借款，請先在周轉小金庫還清" : "";
-  $("riskFree").textContent = `可用餘額 ${money(Math.max(0, free))}${owed > 0 ? `・尚欠 ${money(owed)}（不能再借）` : `・可借上限 ${money(E.LOAN_MAX)}`}`;
+  $("riskFree").textContent = `可用餘額 ${money(Math.max(0, free))}${owed > 0 ? `・尚欠 ${money(owed)}（不能再借）` : `・可借上限 ${money(loanCap())}`}`;
 }
 
 function closeRisk() {
@@ -793,6 +799,7 @@ function applyServer(v) {
   serverMarketMode = v.marketMode || "legacy";
   execution = v.execution || null;
   sentiment = v.sentiment || null;
+  serverLoanLimit = v.account?.loanLimit || 0;
   switchStatus = v.switchStatus || "ready";
   settledPrices = v.accountValuation?.prices || null;
   accountSettledAt = v.accountSettledAt || null;
@@ -913,7 +920,7 @@ function bind() {
   $("loanRepayBtn").onclick = doRepay;
   $("loanMaxBtn").onclick = () => {
     const owed = E.loanOwed(state);
-    $("loanAmount").value = owed > 0 ? Math.min(owed, Math.floor(state.cash * 100) / 100) : E.LOAN_MAX;
+    $("loanAmount").value = owed > 0 ? Math.min(owed, Math.floor(state.cash * 100) / 100) : loanCap();
     updateBankPreview();
   };
   $("loanAmount").addEventListener("input", updateBankPreview);

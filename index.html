@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="assets/apple-touch-icon.png?v=2">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Nunito:wght@600;700;800;900&display=swap">
-<link rel="stylesheet" href="styles.css?v=20261016j">
+<link rel="stylesheet" href="styles.css?v=20261016k">
 </head>
 <body>
 <div class="app-shell">
@@ -169,6 +169,7 @@
             <button type="button" class="bank-tier" data-tier="2" data-amount="100000" role="listitem"><span>≤ 10萬</span><b>0.03%</b></button>
             <button type="button" class="bank-tier" data-tier="3" data-amount="200000" role="listitem"><span>≤ 20萬</span><b>0.04%</b></button>
           </div>
+          <p class="quiet-note" id="loanScaleNote">可借上限＝淨資產 50%（最低 $200,000）。超過 20 萬後借越多利息越高：每多 10 倍日息 +0.02%（200 萬 0.06%、2 億 0.10%），最高 0.50%。</p>
 
           <label class="field-label" for="loanAmount">金額 <span>USD</span></label>
           <div class="input-shell"><span>$</span><input id="loanAmount" type="number" min="1" step="100" placeholder="輸入金額" inputmode="decimal"><button id="loanMaxBtn" type="button">MAX</button></div>
@@ -287,6 +288,6 @@
   </div>
 </div>
 
-<script type="module" src="app.mjs?v=20261016j"></script>
+<script type="module" src="app.mjs?v=20261016k"></script>
 </body>
 </html>

@@ -100,7 +100,7 @@ test('resetAccount 清除借款', () => {
 
 test('server borrow/repay 經由 game.js、view 帶出 loan', () => {
   const g = newGame(start, secret);
-  borrowLoan(g, 50000, start);
+  borrowLoan(g, 50000, start, secret);
   assert.equal(g.account.cash, 60000);
   const v = view(g, -1, [], start, secret);
   assert.equal(v.account.loanOwed, 50000);
@@ -108,19 +108,19 @@ test('server borrow/repay 經由 game.js、view 帶出 loan', () => {
   near(v.accountValuation.loanOwed, 50000);
   near(v.accountValuation.netWorth, v.accountValuation.equity - 50000);
   // 重複借被擋
-  assert.throws(() => borrowLoan(g, 1, start), GameError);
+  assert.throws(() => borrowLoan(g, 1, start, secret), GameError);
 });
 
 test('server advance 自動累計利息', () => {
   const g = newGame(start, secret);
-  borrowLoan(g, 50000, start);
+  borrowLoan(g, 50000, start, secret);
   advance(g, start + E.LOAN_DAY_TICKS * TICK_MS, secret);
   near(E.loanOwed(g.account), 50010, 0.1);
 });
 
 test('server reset 清掉借款', () => {
   const g = newGame(start, secret);
-  borrowLoan(g, 10000, start);
+  borrowLoan(g, 10000, start, secret);
   resetGame(g, start, secret);
   assert.equal(g.account.loan, undefined);
   assert.equal(E.loanOwed(g.account), 0);
@@ -133,4 +133,20 @@ test('無借款帳戶 view 的 loan 欄位為 null、loanOwed 0', () => {
   assert.equal(v.account.loanOwed, 0);
   assert.equal(v.accountValuation.loanOwed, 0);
   near(v.accountValuation.netWorth, v.accountValuation.equity);
+});
+
+test('金庫：可借上限隨淨資產上升（50%，最低 20 萬），借越多日息越高', () => {
+  const a = E.createAccount(1e9);
+  assert.equal(E.loanLimit(E.createAccount(10000), {}), 200000, '小帳戶保底 20 萬');
+  assert.equal(E.loanLimit(a, {}), 5e8, '淨資產 10 億可借 5 億');
+  assert.equal(E.borrow(a, 5e8 + 1, 0, E.loanLimit(a, {})).ok, false);
+  assert.equal(E.borrow(E.createAccount(1e9), 1e6, 0).ok, false, '未給上限時仍維持 20 萬舊行為');
+  // 利率：20 萬以內與舊版相同，之後每 10 倍 +0.02%，封頂 0.5%
+  assert.equal(E.loanRate(200000), 0.0004);
+  assert.equal(E.loanRate(2e6), 0.0006);
+  assert.equal(E.loanRate(2e8), 0.001);
+  assert.equal(E.loanRate(1e40), 0.005);
+  for (let x = 1; x < 1e18; x *= 3) assert.ok(E.loanRate(x * 3) >= E.loanRate(x), '借越多利息不會變低');
+  const r = E.borrow(a, 5e8, 0, E.loanLimit(a, {}));
+  assert.ok(r.ok && r.rateDaily > 0.001);
 });

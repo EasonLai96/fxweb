@@ -14,7 +14,8 @@ const EPS = 1e-9;
 // 有未償還借款時不能再借。本遊戲每 LOAN_DAY_TICKS 根 K 線（= 30 秒）計一天利息，
 // 利息以單利累加在原始本金上（不複利），不隨行情變動。借來的現金進入帳戶可動用餘額，
 // 但未償還的本金＋利息會從淨資產（排行榜成績）中扣除。
-export const LOAN_MAX = 200000;
+export const LOAN_MAX = 200000;          // 最低可借額度
+export const LOAN_NET_RATIO = 0.5;       // 可借額度隨淨資產上升：淨資產的 50%，但不低於 LOAN_MAX
 export const LOAN_DAY_TICKS = 20;        // 20 根 × 1.5 秒 = 30 秒算一天
 export const LOAN_TIERS = [
   [10000, 0.0001],    // ≤ $10,000：日息 0.01%
@@ -23,7 +24,15 @@ export const LOAN_TIERS = [
   [Infinity, 0.0004], // > $100,000：日息 0.04%
 ];
 
+// 借越多、日息越高：≤ $200,000 照原四級；超過後每多借 10 倍，日息再加 0.02%，
+// 例如 200 萬 0.06%、2 億 0.10%、2 兆 0.18%，最高 0.50%。
+// 已存在的借款在借入當下就記下 rateDaily，不會被改。
+export const LOAN_RATE_STEP = 0.0002, LOAN_RATE_CAP = 0.005;
 export function loanRate(amount) {
+  if (amount > LOAN_MAX) {
+    const r = LOAN_TIERS.at(-1)[1] + LOAN_RATE_STEP * Math.log10(amount / LOAN_MAX);
+    return Math.min(LOAN_RATE_CAP, Math.round(r * 1e6) / 1e6);
+  }
   for (const [cap, rate] of LOAN_TIERS) if (amount <= cap) return rate;
   return LOAN_TIERS.at(-1)[1];
 }
@@ -52,11 +61,17 @@ export function accrueLoan(state, ticks) {
   l.accrued = l.accrued + l.principal * l.rateDaily / LOAN_DAY_TICKS * ticks;
 }
 
-export function borrow(state, amount, time) {
+// 可借上限：max($200,000, 淨資產 × 50%)。淨資產已扣除欠款，負值時仍保底 $200,000。
+export function loanLimit(state, prices) {
+  const nw = prices ? netWorth(state, prices) : NaN;
+  return Number.isFinite(nw) ? Math.max(LOAN_MAX, Math.floor(nw * LOAN_NET_RATIO * 100) / 100) : LOAN_MAX;
+}
+
+export function borrow(state, amount, time, limit = LOAN_MAX) {
   if (typeof amount !== "number" || !Number.isFinite(amount)) return { ok: false, error: "借款金額無效" };
   amount = Math.floor(amount * 100) / 100;
   if (amount < 1) return { ok: false, error: "借款金額至少 $1" };
-  if (amount > LOAN_MAX) return { ok: false, error: `單筆借款上限 ${LOAN_MAX.toLocaleString("en-US")}` };
+  if (amount > limit) return { ok: false, error: `目前可借上限 ${limit.toLocaleString("en-US")}（淨資產的 50%，最低 200,000）` };
   if (loanOwed(state) > 0) return { ok: false, error: "尚有未償還借款，請先還清才能再借" };
   state.loan = { principal: amount, accrued: 0, rateDaily: loanRate(amount), openedAt: time };
   state.cash = cents(state.cash + amount);
@@ -102,7 +117,7 @@ export function addMargin(state, prices, id, amount, time) {
 export function borrowToMargin(state, prices, id, amount, time) {
   const pos = state.positions.find(p => p.id === id);
   if (!pos) return { ok: false, error: "找不到持倉（可能已被強制平倉）" };
-  const b = borrow(state, amount, time);
+  const b = borrow(state, amount, time, loanLimit(state, prices));
   if (!b.ok) return b;
   pos.margin += b.amount;
   pos.borrowed = true;

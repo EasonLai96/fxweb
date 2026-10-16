@@ -358,7 +358,7 @@ const gameReset = (req, env) => gameAction(req, env, (g, b, t, secret) => {
   resetGame(g, t, secret);
   return { reset: true };
 });
-const gameBorrow = (req, env) => gameAction(req, env, (g, b, t) => ({ borrowed: borrowLoan(g, b.amount, t) }));
+const gameBorrow = (req, env) => gameAction(req, env, (g, b, t, secret, sentiment) => ({ borrowed: borrowLoan(g, b.amount, t, secret, sentiment) }));
 const gameRepay = (req, env) => gameAction(req, env, (g, b, t) => ({ repaid: repayLoan(g, b.amount, t) }));
 const gameMargin = (req, env) => gameAction(req, env, (g, b, t, secret, sentiment) => ({ margin: addPositionMargin(g, b.id, b.amount, b.source, t, secret, sentiment) }));
 const gameRefuse = (req, env) => gameAction(req, env, (g, b, t) => ({ refused: refuseHelp(g, b.id, t) }));

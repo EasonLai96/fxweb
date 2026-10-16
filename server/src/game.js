@@ -279,10 +279,11 @@ export function closeOrder(g, id, now, marketSecret, sentiment) {
   trimAccount(g.account);
   return r.pnl;
 }
-export function borrowLoan(g, amount, now) {
+export function borrowLoan(g, amount, now, marketSecret, sentiment) {
   requireCaughtUp(g, now);
   if (typeof amount !== 'number' || !Number.isFinite(amount)) throw new GameError('借款金額無效');
-  const r = E.borrow(g.account, amount, now);
+  // 上限依伺服器結算點的淨資產計算，前端無法虛報。
+  const r = E.borrow(g.account, amount, now, E.loanLimit(g.account, accountPrices(g, marketSecret, [], sentiment)));
   if (!r.ok) throw new GameError(r.error);
   trimAccount(g.account);
   return r;
@@ -363,7 +364,7 @@ export function view(g, since, events = [], now = Date.now(), marketSecret, sent
     news: isShared ? m.news.filter(n => n.step > newsFrom) : m.news.filter(n => n.step > newsFrom).map(n => publicNews(n, step)),
     account: { cash: a.cash, startingCash: a.startingCash, nextId: a.nextId,
       positions: a.positions, log: a.log.filter(l => l.type === 'close').slice(-15), eq: a.eq,
-      loan: a.loan ? { ...a.loan } : null, loanOwed: E.loanOwed(a) },
+      loan: a.loan ? { ...a.loan } : null, loanOwed: E.loanOwed(a), loanLimit: E.loanLimit(a, settledPrices) },
     // Shared candles may already be at head while account events originate at
     // an older cursor. Do not hide newly settled expiry/liquidation by since.
     events: isShared ? events : events.filter(e => !Number.isInteger(since) || e.step > since),
