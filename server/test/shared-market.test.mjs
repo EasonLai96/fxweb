@@ -32,7 +32,7 @@ test('random access, price/candle shapes and deterministic 600x6 history',()=>{
       assert.deepEqual(b,sharedCandle(secret,head-599+i,p));
       assert.ok(b.o>0&&b.l>0&&b.h>=b.o&&b.h>=b.c&&b.l<=b.o&&b.l<=b.c);
     }
-    assert.ok(Math.abs(view.prices[p]/PAIRS[p]-1)<0.025);
+    assert.ok(Math.abs(Math.log(view.prices[p]/PAIRS[p]))<0.025*volOf(p));
   }
   assert.ok(!JSON.stringify(view).includes(secret));
   assert.deepEqual(makeSharedMarket(secret,head,{history:600}),view);

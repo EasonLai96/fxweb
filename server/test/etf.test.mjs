@@ -11,7 +11,7 @@ const start = 1800000000000;
 test('ETF 清單：四檔、排在外匯之後、小數兩位', () => {
   assert.deepEqual(ETF_KEYS, ['0050', '00878', 'SPY', 'QQQ']);
   assert.deepEqual(FX_KEYS, ['EUR/USD', 'GBP/USD', 'USD/JPY', 'USD/CHF', 'AUD/USD', 'USD/CAD']);
-  assert.deepEqual(Object.keys(PAIRS).slice(-4), ETF_KEYS);
+  assert.deepEqual(Object.keys(PAIRS).slice(6, 10), ETF_KEYS);
   for (const p of ETF_KEYS) { assert.ok(isEtf(p)); assert.equal(priceDigits(p), 2); assert.equal(E.isUsdBase(p), false); }
   assert.equal(priceDigits('USD/JPY'), 3); assert.equal(priceDigits('EUR/USD'), 4);
 });
@@ -51,7 +51,7 @@ test('登入帳戶可交易 ETF：開倉、推進、平倉', () => {
 
 test('舊私有行情（加入 ETF 前建立）仍只有外匯，view 不會因缺 ETF 而出錯', () => {
   const fxOnly = createMarketState(undefined, { secret: 'aa'.repeat(32) });
-  for (const p of ETF_KEYS) { delete fxOnly.prices[p]; delete fxOnly.candles[p]; delete fxOnly.phase[p]; delete fxOnly.bias[p]; }
+  for (const p of Object.keys(PAIRS).filter(q => !FX_KEYS.includes(q))) { delete fxOnly.prices[p]; delete fxOnly.candles[p]; delete fxOnly.phase[p]; delete fxOnly.bias[p]; }
   const g = newGame(start); g.market = fxOnly; g.lastStepAt = start;
   stepMarket(g.market);
   assert.deepEqual(Object.keys(g.market.prices), FX_KEYS);

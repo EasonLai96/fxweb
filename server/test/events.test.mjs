@@ -1,0 +1,103 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import * as E from '../../engine.mjs';
+import { PAIRS, CRYPTO_KEYS, FX_KEYS, EVENT_TYPES, pickEvent, eventShape, EVENT_SPAN, priceDigits, createMarket, createMarketState, stepMarket, makeRng } from '../../market.mjs';
+import { makeSharedMarket, sharedPricer, EVENT_START, EVENT_BUCKET } from '../src/shared-market.js';
+import { newGame, advance, openOrder, TICK_MS } from '../src/game.js';
+
+const secret = '77'.repeat(32);
+const findEvents = (from, to) => {
+  const out = [];
+  for (let t = from; t <= to; t += 1999) for (const n of makeSharedMarket(secret, Math.min(to, t + 1998), { history: 1 }).news) if (n.event && !out.some(e => e.step === n.step)) out.push(n);
+  return out;
+};
+
+test('虛擬幣：四檔、小數位數', () => {
+  assert.deepEqual(CRYPTO_KEYS, ['BTC', 'ETH', 'SOL', 'DOGE']);
+  assert.equal(priceDigits('BTC'), 1); assert.equal(priceDigits('DOGE'), 4);
+  assert.equal(E.isUsdBase('BTC'), false);
+});
+
+test('pickEvent：每種事件都抽得到、漲跌方向與範圍正確', () => {
+  const r = makeRng(1), seen = new Set();
+  for (let i = 0; i < 4000; i++) {
+    const ev = pickEvent(r);
+    seen.add(ev.id);
+    const def = EVENT_TYPES.find(t => t.id === ev.id);
+    for (const [p, m] of Object.entries(ev.moves)) { assert.ok(Object.hasOwn(PAIRS, p)); assert.ok(m > -0.8 && m < 1.6, `${ev.id} ${p} ${m}`); }
+    if (!def.hits.some(h => h[3])) assert.equal(Math.sign(ev.moves[ev.pair]), ev.claimed);
+  }
+  assert.equal(seen.size, EVENT_TYPES.length);
+  // 舊行情只有外匯：事件只會影響存在的商品
+  for (let i = 0; i < 500; i++) { const ev = pickEvent(r, FX_KEYS); if (ev) assert.ok(Object.keys(ev.moves).every(p => FX_KEYS.includes(p))); }
+});
+
+test('事件形狀：瞬間跳到底、維持、再回到 0', () => {
+  assert.equal(eventShape(-1), 0); assert.equal(eventShape(0), 0.6); assert.equal(eventShape(2), 1); assert.equal(eventShape(39), 1);
+  assert.ok(eventShape(300) > 0 && eventShape(300) < 1); assert.equal(eventShape(EVENT_SPAN), 0);
+});
+
+test('共用行情：事件開始前的價格完全不變；之後約每 11 分鐘一次', () => {
+  const at = sharedPricer(secret);
+  // EVENT_START 之前沒有任何事件
+  assert.equal(findEvents(EVENT_START - 4000, EVENT_START - 1).length, 0);
+  const evs = findEvents(EVENT_START, EVENT_START + 57600);   // 一天
+  const perMin = 24 * 60 / evs.length;
+  assert.ok(perMin > 6 && perMin < 20, `平均 ${perMin.toFixed(1)} 分鐘一次`);
+  // 事件當根跳空方向正確、幅度接近 6 成
+  for (const e of evs.slice(0, 20)) {
+    const p = e.pair, m = e.moves[p], jump = at(e.step, p) / at(e.step - 1, p) - 1;
+    assert.equal(Math.sign(jump), Math.sign(m), e.text);
+    assert.ok(Math.abs(Math.log(1 + jump)) > Math.abs(Math.log(1 + m)) * 0.45, `${e.text} 跳 ${jump}`);
+  }
+});
+
+test('事件不洩漏未來：還沒發生的事件不會出現在行情裡', () => {
+  const evs = findEvents(EVENT_START, EVENT_START + 20000), e = evs[3];
+  const before = makeSharedMarket(secret, e.step - 1, { history: 50 });
+  assert.ok(!before.news.some(n => n.event && n.step === e.step));
+  const at = makeSharedMarket(secret, e.step, { since: e.step - 1 });
+  assert.ok(at.news.some(n => n.event && n.step === e.step));
+});
+
+test('瞬間破產：100× 做多遇到崩盤，下一根就被強平，虧到保證金以上', () => {
+  const evs = findEvents(EVENT_START, EVENT_START + 57600);
+  const crash = evs.find(e => e.moves.BTC != null && e.moves.BTC < -0.2);
+  assert.ok(crash, '找不到 BTC 崩盤事件');
+  const t0 = (crash.step - 1) * TICK_MS, g = newGame(t0, secret);
+  const pos = openOrder(g, { pair: 'BTC', side: 1, leverage: 100, margin: 1000 }, t0, secret);
+  const r = advance(g, crash.step * TICK_MS, secret);
+  const liq = r.events.find(e => e.type === 'liquidated' && e.id === pos.id);
+  assert.ok(liq, '應被強平');
+  const closed = g.account.log.find(l => l.type === 'close' && l.id === pos.id);
+  assert.ok(closed.pnl < -1000 * 5, `跳空穿倉，虧損 ${closed.pnl}`);   // 跳 -20% 以上 × 100 倍 ≫ 保證金
+});
+
+test('瞬間致富：100× 做多遇到暴漲，一根 K 線賺好幾倍', () => {
+  const evs = findEvents(EVENT_START, EVENT_START + 57600);
+  const moon = evs.find(e => Object.entries(e.moves).some(([p, m]) => CRYPTO_KEYS.includes(p) && m > 0.2));
+  const p = Object.entries(moon.moves).find(([q, m]) => CRYPTO_KEYS.includes(q) && m > 0.2)[0];
+  const at = sharedPricer(secret), entry = at(moon.step - 1, p), now = at(moon.step, p);
+  const pnl = E.unrealizedPnl({ pair: p, side: 1, notional: 100000, entry, units: 100000 / entry }, now);
+  assert.ok(pnl > 1000 * 10, `$1000 保證金 100× 賺 ${pnl.toFixed(0)}`);
+});
+
+test('本機行情：舊存檔（沒有事件欄位）推進結果與改版前相同；新行情會出現事件', () => {
+  const old = createMarketState(5); delete old.ev;
+  const a = JSON.parse(JSON.stringify(old)), b = JSON.parse(JSON.stringify(old));
+  for (let i = 0; i < 2000; i++) { const r = stepMarket(a); stepMarket(b); assert.equal(r.event, null); }
+  assert.deepEqual(a, b);
+  const m = createMarket(11); let n = 0;
+  for (let i = 0; i < 6000; i++) if (m.tick().event) n++;
+  assert.ok(n >= 8 && n <= 40, `6000 根 ${n} 次`);
+});
+
+test('資產超過 10 億時仍可下單（以前會誤報「保證金至少 $10」）', () => {
+  const t0 = 1800000000000, g = newGame(t0, secret);
+  g.account.cash = 5e9; g.account.startingCash = 10000;
+  const pos = openOrder(g, { pair: 'EUR/USD', side: 1, leverage: 2, margin: 2e9 }, t0, secret);
+  assert.equal(pos.margin, 2e9);
+  assert.throws(() => openOrder(g, { pair: 'SPY', side: 1, leverage: 1, margin: 9e9 }, t0, secret), /可用保證金不足/);
+  assert.throws(() => openOrder(g, { pair: 'SPY', side: 1, leverage: 1, margin: 5 }, t0, secret), /至少 \$10/);
+  assert.throws(() => openOrder(g, { pair: 'SPY', side: 1, leverage: 1, margin: Infinity }, t0, secret), /金額無效/);
+});

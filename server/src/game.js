@@ -3,7 +3,7 @@
 import * as E from "../../engine.mjs";
 import { ensureProgress, recordOpen, recordClose, resetProgress, progressView } from "./progress.js";
 import { createMarketState, secureMarketState, stepMarket, publicNews, PAIRS, NEWS_SETTLE } from "../../market.mjs";
-import { absoluteTick, makeSharedMarket, sharedPrice } from "./shared-market.js";
+import { absoluteTick, makeSharedMarket, sharedPricer } from "./shared-market.js";
 
 export const TICK_MS = 1500;
 export const MAX_CATCHUP = 600;
@@ -26,9 +26,13 @@ function secretRequired(secret) {
 }
 function shared(g) { return g.marketMode === 'shared'; }
 function cursor(g) { return shared(g) ? g.cursor : g.market.step; }
-function tickPrices(secret, tick) {
-  return Object.fromEntries(pairs.map(pair => [pair, sharedPrice(secret, tick, pair)]));
+function tickPrices(secret, tick, only = pairs, pricer = null) {
+  const at = pricer || sharedPricer(secret);
+  return Object.fromEntries(only.map(pair => [pair, at(tick, pair)]));
 }
+// 帳戶結算只需要「有持倉的商品」的價格；其他商品不影響保證金、強平或淨值。
+// Worker 免費方案每個請求只有約 10ms CPU，補算時全部 14 檔都算會超時。
+function heldPairs(a) { return [...new Set(a.positions.map(p => p.pair))]; }
 function trimAccount(a) {
   if (a.log.length > LOG_KEEP) a.log.splice(0, a.log.length - LOG_KEEP);
 }
@@ -148,13 +152,15 @@ function advanceShared(g, now, marketSecret) {
   if (!a.positions.length) {
     // With no exposure, price history before head cannot change the account.
     g.cursor = head;
-    if (due) saveEquity(a, tickPrices(marketSecret, head), head);
+    // 沒有持倉時淨值 = 現金，不需要任何價格。
+    if (due) saveEquity(a, {}, head);
     return { steps: 0, fastForwarded: due, events, skipped: false, pendingSteps: 0 };
   }
-  const n = Math.min(due, MAX_CATCHUP);
+  const n = Math.min(due, MAX_CATCHUP), pricer = sharedPricer(marketSecret);
   for (let i = 1; i <= n; i++) {
     const tick = g.cursor + i;
-    settle(g, tickPrices(marketSecret, tick), tick * TICK_MS, tick, events, true);
+    // 只算持倉商品；結算中途被強平的商品下一根自然就不再計算。
+    settle(g, tickPrices(marketSecret, tick, heldPairs(a), pricer), tick * TICK_MS, tick, events, true);
     if (!a.positions.length) {
       // All positions have just settled at their historical tick. Skipping the
       // remainder now is safe, but never settle them at today's head price.
@@ -187,8 +193,9 @@ function remaining(g, now) {
 function requireCaughtUp(g, now) {
   if (!Number.isFinite(now) || remaining(g, now) > 0) throw new GameError('行情補算中，請追平後再交易');
 }
-function accountPrices(g, secret) {
-  if (shared(g)) { secretRequired(secret); return tickPrices(secret, g.cursor); }
+// extra：除了持倉商品外還需要的商品（例如要開倉的那一檔）。
+function accountPrices(g, secret, extra = []) {
+  if (shared(g)) { secretRequired(secret); return tickPrices(secret, g.cursor, [...new Set([...heldPairs(g.account), ...extra])]); }
   return { ...g.market.prices };
 }
 export function openOrder(g, { pair, side, leverage, margin }, now, marketSecret) {
@@ -197,10 +204,13 @@ export function openOrder(g, { pair, side, leverage, margin }, now, marketSecret
   if (typeof pair !== 'string' || !Object.prototype.hasOwnProperty.call(PAIRS, pair)) throw new GameError('不支援的商品');
   if (side !== 1 && side !== -1) throw new GameError('方向錯誤');
   if (!Number.isInteger(leverage)) throw new GameError('槓桿必須是整數');
-  if (typeof margin !== 'number' || !Number.isFinite(margin) || margin < 10 || margin > 1e9) throw new GameError('保證金至少 $10');
+  // 上限不另外設：下面的「可用保證金不足」檢查已經保證不會超過玩家實際擁有的錢。
+  // （以前寫死 1e9 上限卻回「至少 $10」，資產破 10 億的玩家就無法下單。）
+  if (typeof margin !== 'number' || !Number.isFinite(margin)) throw new GameError('保證金金額無效');
+  if (margin < 10) throw new GameError('保證金至少 $10');
   if (g.account.positions.length >= MAX_POSITIONS) throw new GameError(`最多同時持有 ${MAX_POSITIONS} 筆`);
   margin = Math.floor(margin * 100) / 100;
-  const prices = accountPrices(g, marketSecret);
+  const prices = accountPrices(g, marketSecret, [pair]);
   // Preserve the exact order time: expiry occurs on the first historical tick
   // at/after openedAt + seven days, never up to 1499 ms early.
   const r = E.openPosition(g.account, prices, { pair, side, leverage, notional: margin * leverage, time: now });
@@ -280,7 +290,8 @@ export function view(g, since, events = [], now = Date.now(), marketSecret) {
   for (const p of isShared ? pairs : marketPairs(m)) candles[p] = isShared || full ? m.candles[p] : m.candles[p].filter(c => c.t > since);
   const a = g.account, pending = remaining(g, now);
   const settledStep = cursor(g);
-  const settledPrices = isShared ? (settledStep === step ? m.prices : tickPrices(marketSecret, settledStep)) : m.prices;
+  // 補算中（帳戶落後行情）時，帳戶估值只需要持倉商品在結算點的價格。
+  const settledPrices = isShared ? (settledStep === step ? m.prices : tickPrices(marketSecret, settledStep, heldPairs(a))) : m.prices;
   const headPrices = { ...m.prices };
   const newsFrom = full ? -Infinity : since - NEWS_SETTLE - 1;
   return {

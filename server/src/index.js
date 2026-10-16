@@ -1,7 +1,6 @@
 import { ensureProgress } from "./progress.js";
 import { joinSeason, leaveSeason, updateSeasonScore, seasonParticipationView, publicLeaderboard } from "./leaderboard.js";
-import { sharedPrice } from "./shared-market.js";
-import { PAIRS } from "../../market.mjs";
+import { sharedPricer } from "./shared-market.js";
 // fxweb 後端：Cloudflare Worker + D1。帳號密碼登入、救援碼重設密碼、伺服器端計算的遊戲。
 // 密碼：PBKDF2-SHA256（Workers 上限 100000 次迭代）+ 每人隨機 salt。
 // 登入憑證：隨機 token，以 Authorization: Bearer 傳遞；資料庫只存 token 的 SHA-256。
@@ -259,7 +258,9 @@ function sharedSecret(env) {
 }
 function serverPrices(g, secret) {
   if (g.marketMode !== 'shared') return g.market.prices;
-  return Object.fromEntries(Object.keys(PAIRS).map(pair => [pair, sharedPrice(secret, g.cursor, pair)]));
+  // 排行榜成績只需要持倉商品的價格（updateSeasonScore 只檢查持倉商品）。
+  const at = sharedPricer(secret), held = [...new Set(g.account.positions.map(p => p.pair))];
+  return Object.fromEntries(held.map(pair => [pair, at(g.cursor, pair)]));
 }
 async function withGame(env, userId, mutate, request = null) {
   const secret = sharedSecret(env);

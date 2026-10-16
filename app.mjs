@@ -1,13 +1,13 @@
-import { initExtras } from "./extras.mjs?v=20261016c";
-import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261016c";
-import * as E from "./engine.mjs?v=20261016c";
-import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, priceDigits, currencyOf } from "./market.mjs?v=20261016c";
-import * as Store from "./store.mjs?v=20261016c";
-import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261016c";
-import * as Cloud from "./cloud.mjs?v=20261016c";
-import { createRemoteMarket } from "./remote.mjs?v=20261016c";
-import { createAchievementBook } from "./achievements.mjs?v=20261016c";
-import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261016c";
+import { initExtras } from "./extras.mjs?v=20261016d";
+import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261016d";
+import * as E from "./engine.mjs?v=20261016d";
+import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261016d";
+import * as Store from "./store.mjs?v=20261016d";
+import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261016d";
+import * as Cloud from "./cloud.mjs?v=20261016d";
+import { createRemoteMarket } from "./remote.mjs?v=20261016d";
+import { createAchievementBook } from "./achievements.mjs?v=20261016d";
+import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261016d";
 
 const THEME_KEY = "fxweb.theme";
 // 兩種模式：
@@ -129,15 +129,15 @@ function renderPairs() {
   if (!ready.includes(ui.pair) && ready.length) ui.pair = ready[0];
   if (!list.dataset.built || list.dataset.built !== ready.join(",")) {
     const row = p => `
-      <button type="button" class="pair-row${isEtf(p) ? " etf" : ""}" role="option" data-pair="${p}">
+      <button type="button" class="pair-row${isEtf(p) ? " etf" : isCrypto(p) ? " crypto" : ""}" role="option" data-pair="${p}">
         <span><strong>${p}</strong><small>${PAIR_NAMES[p]}</small></span>
         <span class="pair-numbers"><strong data-f="price"></strong><small data-f="chg"></small></span>
         <canvas data-spark="${p}" aria-hidden="true"></canvas>
       </button>`;
-    const fx = ready.filter(p => !isEtf(p)), etf = ready.filter(isEtf);
-    list.innerHTML = etf.length
-      ? `<div class="pair-group-label" role="presentation">外匯</div>${fx.map(row).join("")}<div class="pair-group-label" role="presentation">股票 ETF</div>${etf.map(row).join("")}`
-      : fx.map(row).join("");
+    const groups = ["fx", "etf", "crypto"].map(k => [k, ready.filter(p => kindOf(p) === k)]).filter(([, l]) => l.length);
+    list.innerHTML = groups.length > 1
+      ? groups.map(([k, l]) => `<div class="pair-group-label" role="presentation">${KIND_LABEL[k]}</div>${l.map(row).join("")}`).join("")
+      : ready.map(row).join("");
     list.dataset.built = ready.join(",");
     list.onclick = e => { const b = e.target.closest("[data-pair]"); if (b) selectPair(b.dataset.pair); };
   }
@@ -228,7 +228,7 @@ function updateBankPreview() {
 function renderChart() {
   const p = ui.pair, cs = market.candles(p), last = cs[cs.length - 1], ch = change(p);
   $("pairTitle").textContent = spaced(p);
-  $("pairName").textContent = PAIR_NAMES[p] + (isEtf(p) ? `・${ccyTag(p)} 計價` : "");
+  $("pairName").textContent = PAIR_NAMES[p] + (kindOf(p) !== "fx" ? `・${ccyTag(p)} 計價` : "");
   $("currentPrice").textContent = last.c.toFixed(digits(p));
   $("currentPrice").className = signCls(last.c - last.o);
   $("priceChange").textContent = pct(ch); $("priceChange").className = signCls(ch);
@@ -239,7 +239,9 @@ function renderChart() {
     lines.push({ price: E.liquidationPrice(pos), kind: "liq", label: `#${pos.id} 強平` });
   }
   const step = market.step();
-  const marks = ui.showNews ? market.news().filter(n => n.pair === p).map(n => ({ t: n.step, reversed: (n.settled != null ? n.settled : step - n.step >= NEWS_SETTLE) && !!n.reversed })) : [];
+  const marks = ui.showNews ? market.news().filter(n => n.pair === p || n.moves?.[p] != null).map(n => n.event
+    ? { t: n.step, event: true, up: (n.moves?.[p] ?? n.claimed) > 0 }
+    : { t: n.step, reversed: (n.settled != null ? n.settled : step - n.step >= NEWS_SETTLE) && !!n.reversed }) : [];
   drawCandles($("chart"), cs, { theme: theme(), digits: digits(p), lines, marks, showMA: ui.showMA });
 }
 
@@ -247,8 +249,8 @@ function renderChart() {
 function renderOrder(prices, m) {
   const p = ui.pair, price = prices[p], lev = ui.leverage, margin = ui.margin;
   const notional = margin * lev;
-  $("orderPair").textContent = isEtf(p) ? `${p} ${PAIR_NAMES[p]}` : spaced(p);
-  $("orderPairLabel").textContent = isEtf(p) ? "交易商品" : "交易貨幣對";
+  $("orderPair").textContent = kindOf(p) !== "fx" ? `${p} ${PAIR_NAMES[p]}` : spaced(p);
+  $("orderPairLabel").textContent = kindOf(p) !== "fx" ? "交易商品" : "交易貨幣對";
   $("leverageValue").textContent = lev + "×";
   const levIndex = E.LEVERAGES.indexOf(lev);
   $("leverageRange").value = levIndex;
@@ -410,7 +412,34 @@ function renderHistory() {
     : '<div class="empty-state">還沒有結算紀錄</div>';
 }
 
+const pctTxt = m => `${m > 0 ? "+" : ""}${(m * 100).toFixed(0)}%`;
+function eventSummary(n) {
+  return Object.entries(n.moves || {}).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).slice(0, 5).map(([p, m]) => `${p} ${pctTxt(m)}`).join("、");
+}
+function showEvent(n) {
+  const up = n.claimed > 0;
+  $("tickerTag").textContent = up ? "▲ 暴漲" : "▼ 崩盤";
+  $("tickerTag").className = "ticker-tag event" + (up ? "" : " bear");
+  const track = $("tickerTrack");
+  track.textContent = `【重大事件】${n.text}　——　${eventSummary(n)}，約 15 分鐘內逐步回穩。`;
+  track.className = "ticker-track";
+  $("nfTag").textContent = up ? "▲ 重大事件・暴漲" : "▼ 重大事件・崩盤";
+  $("nfTag").className = "nf-tag event" + (up ? "" : " bear");
+  $("nfTitle").textContent = n.text;
+  $("nfBody").textContent = `${eventSummary(n)}。價格已瞬間跳空，高槓桿可能一根 K 線就強平；之後約 15 分鐘慢慢回到原本走勢。`;
+  $("newsFloat").classList.add("show", "event");
+  document.body.classList.remove("shock-up", "shock-down"); void document.body.offsetWidth;
+  document.body.classList.add(up ? "shock-up" : "shock-down");
+  clearTimeout(newsTimer); newsTimer = setTimeout(() => { $("newsFloat").classList.remove("show", "event"); document.body.classList.remove("shock-up", "shock-down"); }, 9000);
+  // 有持倉被影響時，跟玩家說一聲
+  const hit = state.positions.filter(pos => n.moves?.[pos.pair] != null);
+  if (hit.length) {
+    const good = hit.filter(pos => pos.side * n.moves[pos.pair] > 0).length;
+    toast(good === hit.length ? `🚀 你的 ${hit.length} 筆持倉站在對的一邊！` : good ? `⚡ 事件影響你 ${hit.length} 筆持倉，其中 ${good} 筆受惠` : `💥 重大事件打到你的 ${hit.length} 筆持倉！`, good < hit.length);
+  }
+}
 function showNews(n) {
+  if (n.event) { showEvent(n); return; }
   const bull = n.claimed > 0;
   $("tickerTag").textContent = `${n.pair} ${bull ? "利多" : "利空"}`;
   $("tickerTag").className = "ticker-tag" + (bull ? "" : " bear");
@@ -435,6 +464,8 @@ function renderNewsCenter() {
     return;
   }
   $("newsCenterList").innerHTML = list.length ? list.map(n => {
+    if (n.event) return `<div class="news-item event"><span class="nf-tag event${n.claimed > 0 ? "" : " bear"}">${n.claimed > 0 ? "▲ 重大事件・暴漲" : "▼ 重大事件・崩盤"}</span>
+      <h4>${esc(n.text)}</h4><small>${esc(eventSummary(n))}・${step - n.step} 根 K 線前</small></div>`;
     const bull = n.claimed > 0, settled = n.settled != null ? n.settled : step - n.step >= NEWS_SETTLE;
     return `<div class="news-item"><span class="nf-tag${bull ? "" : " bear"}">${n.pair}・${bull ? "利多" : "利空"}</span>${settled && n.reversed ? '<span class="rev-tag">市場反向</span>' : ""}
       <h4>${esc(n.text)}</h4><small>${settled ? (n.reversed ? "結果：市場走出相反方向" : "結果：市場照新聞方向走") : "行情發酵中…"}・${step - n.step} 根 K 線前</small></div>`;
@@ -708,7 +739,8 @@ function loop() {
   if (mode === "server") { poll(); return; }
   if (mode === "battle") { if (battleAuto && !risk) nextBattleDay(); return; }
   if (ui.paused || (risk && risk.auto)) return;
-  const { prices, news } = market.tick();
+  const { prices, news: plain, event } = market.tick();
+  const news = event || plain;
   E.accrueLoan(state, 1);
   const events = E.settleTick(state, prices, Date.now());
   showEvents(events);
@@ -750,7 +782,7 @@ function applyServer(v) {
     scanLog(a.log);
     checkAccountAch(px);
   }
-  const latest = fresh[fresh.length - 1];
+  const latest = fresh.filter(n => n.event).at(-1) || fresh[fresh.length - 1];
   if (latest) showNews(latest);
   lastOk = Date.now();
   setSyncUi("ok", catchingUp

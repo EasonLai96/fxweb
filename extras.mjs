@@ -1,11 +1,11 @@
-import { feeFor, LEVERAGES } from './engine.mjs?v=20261016c';
-import { getAvatar, saveAvatar, removeAvatar, avatarImage, DEFAULT_AVATAR_URL } from './avatar.mjs?v=20261016c';
+import { feeFor, LEVERAGES } from './engine.mjs?v=20261016d';
+import { getAvatar, saveAvatar, removeAvatar, avatarImage, DEFAULT_AVATAR_URL } from './avatar.mjs?v=20261016d';
 
 function defaultAvatarImg() {
   const img = document.createElement('img'); img.alt = '預設分享頭像'; img.src = DEFAULT_AVATAR_URL; return img;
 }
-import { drawShareCard } from './share-card.mjs?v=20261016c';
-import makeQR from './qr-code.mjs?v=20261016c';
+import { drawShareCard } from './share-card.mjs?v=20261016d';
+import makeQR from './qr-code.mjs?v=20261016d';
 
 const qr = makeQR(0, 'M');
 qr.addData('https://easonlai96.github.io/fxweb/');

@@ -68,6 +68,14 @@ export function drawCandles(canvas, all, { theme = "day", digits = 4, lines = []
     const i = candles.findIndex(c => c.t === m.t);
     if (i < 0) continue;
     const x = xAt(i);
+    if (m.event) {   // 重大事件：整條紅/綠色帶 + 閃電圖示
+      const col = m.up ? T.up : T.down;
+      ctx.fillStyle = col; ctx.globalAlpha = 0.14; ctx.fillRect(x - step / 2, top, step, bottom - top); ctx.globalAlpha = 1;
+      ctx.beginPath(); ctx.arc(x, top + 7, 7, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = T.bg; ctx.font = "bold 10px sans-serif"; ctx.textAlign = "center";
+      ctx.fillText("⚡", x, top + 10.5); ctx.textAlign = "left"; ctx.font = "10px 'DM Mono', monospace";
+      continue;
+    }
     ctx.strokeStyle = m.reversed ? "rgba(242,167,107,.45)" : "rgba(213,225,179,.28)";
     ctx.setLineDash([2, 4]); ctx.beginPath(); ctx.moveTo(x, top + 12); ctx.lineTo(x, bottom); ctx.stroke(); ctx.setLineDash([]);
     ctx.fillStyle = m.reversed ? LIQ : T.dash;

@@ -521,3 +521,23 @@ html[data-theme="night"] .ach-card.unlocked{border-color:#6b5a26;background:line
 .metric strong,.money-large{overflow:hidden;text-overflow:ellipsis}
 @media(max-width:1250px){.position-row{grid-template-columns:minmax(0,1.2fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) auto}}
 @media(max-width:720px){.position-row{grid-template-columns:minmax(0,1fr) auto auto}}
+
+/* ===== 重大事件（崩盤／暴漲）===== */
+.ticker-tag.event{background:#2f6b4a;color:#fff;animation:evPulse .9s ease-in-out 4}
+.ticker-tag.event.bear{background:#c2414f;color:#fff}
+.nf-tag.event{background:#2f6b4a;color:#fff}
+.nf-tag.event.bear{background:#c2414f;color:#fff}
+.news-float.event{border:2px solid #2f6b4a;box-shadow:0 0 0 4px rgba(47,107,74,.18),var(--shadow-modal)}
+.news-float.event:has(.nf-tag.bear){border-color:#c2414f;box-shadow:0 0 0 4px rgba(194,65,79,.2),var(--shadow-modal)}
+.news-float.event h4{font-size:16px}
+.news-item.event{border-left:3px solid #c2414f;padding-left:10px}
+.news-item.event:has(.nf-tag.event:not(.bear)){border-left-color:#2f6b4a}
+@keyframes evPulse{50%{transform:scale(1.12)}}
+@keyframes shockDown{0%,100%{transform:none}15%{transform:translateX(-7px)}30%{transform:translateX(6px)}45%{transform:translateX(-4px)}60%{transform:translateX(3px)}}
+@keyframes flashDown{0%{box-shadow:inset 0 0 0 9999px rgba(220,60,75,.22)}100%{box-shadow:inset 0 0 0 9999px rgba(220,60,75,0)}}
+@keyframes flashUp{0%{box-shadow:inset 0 0 0 9999px rgba(60,190,120,.2)}100%{box-shadow:inset 0 0 0 9999px rgba(60,190,120,0)}}
+body.shock-down .app-shell, body.shock-down main{animation:shockDown .5s ease-out}
+body.shock-down::after, body.shock-up::after{content:"";position:fixed;inset:0;pointer-events:none;z-index:40;animation:flashDown 1.2s ease-out forwards}
+body.shock-up::after{animation-name:flashUp}
+@media (prefers-reduced-motion:reduce){body.shock-down .app-shell,body.shock-down main,.ticker-tag.event{animation:none}}
+.pair-row.crypto > span:first-child > strong::after{content:"幣";margin-left:6px;padding:1px 5px;border-radius:5px;font:800 9px/1.4 sans-serif;vertical-align:2px;background:#fff3cf;color:#8a6a12}
