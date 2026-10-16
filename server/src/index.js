@@ -1,5 +1,5 @@
 import { ensureProgress } from "./progress.js";
-import { joinSeason, leaveSeason, updateSeasonScore, seasonParticipationView, publicLeaderboard } from "./leaderboard.js";
+import { joinSeason, leaveSeason, updateSeasonScore, seasonParticipationView, publicLeaderboard, archivedLeaderboard, archiveSeason, previousSeason, currentSeason } from "./leaderboard.js";
 import { sharedPricer, absoluteTick } from "./shared-market.js";
 import { captureSentiment, loadSnapshots, SENTIMENT_START } from "./sentiment.js";
 import { presence, prunePresence } from "./presence.js";
@@ -364,6 +364,11 @@ const gameMargin = (req, env) => gameAction(req, env, (g, b, t, secret, sentimen
 const gameRefuse = (req, env) => gameAction(req, env, (g, b, t) => ({ refused: refuseHelp(g, b.id, t) }));
 async function leaderboardList(req, env) {
   await consumeRate(env, "board-ip:" + (req.headers.get("CF-Connecting-IP") || "local"), 90, 60000);
+  const season = new URL(req.url).searchParams.get("season");
+  if (season && season !== currentSeason(now())) {
+    try { return { status: 200, body: { leaderboard: await archivedLeaderboard(env, season) } }; }
+    catch (e) { if (e instanceof GameError) throw new HttpError(400, 'bad_season', e.message); throw e; }
+  }
   return { status: 200, body: { leaderboard: await publicLeaderboard(env, now()) } };
 }
 async function leaderboardMe(req, env) {
@@ -447,7 +452,11 @@ const ROUTES = {
 };
 
 export default {
-  async scheduled(event, env) { await captureSentiment(env, event.scheduledTime); await prunePresence(env, event.scheduledTime); },
+  async scheduled(event, env) {
+    await captureSentiment(env, event.scheduledTime);
+    await prunePresence(env, event.scheduledTime);
+    await archiveSeason(env, previousSeason(event.scheduledTime).id, event.scheduledTime);
+  },
   async fetch(req, env) {
     const url = new URL(req.url);
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(req, env) });

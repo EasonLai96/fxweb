@@ -1,13 +1,13 @@
-import { initExtras } from "./extras.mjs?v=20261016m";
-import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261016m";
-import * as E from "./engine.mjs?v=20261016m";
-import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261016m";
-import * as Store from "./store.mjs?v=20261016m";
-import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261016m";
-import * as Cloud from "./cloud.mjs?v=20261016m";
-import { createRemoteMarket } from "./remote.mjs?v=20261016m";
-import { createAchievementBook } from "./achievements.mjs?v=20261016m";
-import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261016m";
+import { initExtras } from "./extras.mjs?v=20261016n";
+import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261016n";
+import * as E from "./engine.mjs?v=20261016n";
+import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261016n";
+import * as Store from "./store.mjs?v=20261016n";
+import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261016n";
+import * as Cloud from "./cloud.mjs?v=20261016n";
+import { createRemoteMarket } from "./remote.mjs?v=20261016n";
+import { createAchievementBook } from "./achievements.mjs?v=20261016n";
+import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261016n";
 
 const THEME_KEY = "fxweb.theme";
 // One random id per tab lifetime; never derive presence from username or IP.
@@ -1106,7 +1106,7 @@ extras = initExtras({
 });
 leaderUI = initLeaderboard({
   request: (action, data) => {
-    if (action === "list") return Cloud.leaderboard.list();
+    if (action === "list") return Cloud.leaderboard.list(data?.season);
     if (action === "me") return Cloud.leaderboard.me();
     if (action === "join") return Cloud.leaderboard.join(data.nickname);
     if (action === "leave") return Cloud.leaderboard.leave();

@@ -101,3 +101,38 @@ test('public query exposes only opted-in current-season allowlisted rows with st
   e.DB.raw.prepare('UPDATE games SET state = ? WHERE user_id = 1').run(JSON.stringify(a));
   assert.deepEqual((await publicLeaderboard(e, jan)).entries, []);
 });
+
+test('季中重開賽季：新賽季 ID、舊參賽失效、帳戶不動，重置後可報名新賽季', async () => {
+  const { SEASON_RESTARTS, seasonInfo, previousSeason, archiveSeason, archivedLeaderboard } = await import('../src/leaderboard.js');
+  const r = SEASON_RESTARTS.at(-1), before = r.start - 1;
+  assert.equal(currentSeason(before), '2026-Q4');
+  assert.equal(currentSeason(r.start), r.id);
+  assert.equal(seasonInfo(r.start).end, Date.UTC(2027, 0, 1));
+  assert.equal(previousSeason(r.start).id, '2026-Q4');
+  assert.equal(currentSeason(Date.UTC(2027, 0, 1)), '2027-Q1', '下一季照常');
+  assert.equal(previousSeason(Date.UTC(2027, 0, 1)).id, r.id);
+
+  const e = env(), g = newGame(before);
+  joinSeason(g, 'old-king', before);
+  g.seasonParticipation.score = 99;
+  const cashBefore = g.account.cash;
+  insert(e, 7, 'private-user', g);
+  // 重開後：舊參賽不再計分、顯示未參賽，帳戶金額不變
+  assert.equal(updateSeasonScore(g, g.market.prices, r.start), false);
+  assert.equal(seasonParticipationView(g, r.start).status, 'not_joined');
+  assert.equal(g.account.cash, cashBefore);
+  const live = await publicLeaderboard(e, r.start);
+  assert.equal(live.season, r.id); assert.equal(live.entries.length, 0); assert.equal(live.previousSeason, '2026-Q4');
+  // 封存上季（只寫一次）
+  assert.equal(await archiveSeason(e, '2026-Q4', before), 0, '還沒結束不封存');
+  assert.equal(await archiveSeason(e, '2026-Q4', r.start), 1);
+  e.DB.raw.prepare("UPDATE games SET state = json_set(state, '$.seasonParticipation.score', 5)").run();
+  assert.equal(await archiveSeason(e, '2026-Q4', r.start + 60000), 0, '已封存不重寫');
+  const old = await archivedLeaderboard(e, '2026-Q4');
+  assert.equal(old.entries[0].nickname, 'old-king'); assert.equal(old.entries[0].returnPct, 99);
+  assert.ok(!JSON.stringify(old).includes('private-user'));
+  await assert.rejects(() => archivedLeaderboard(e, "x' OR 1"), GameError);
+  // 想上新榜：要先重置成全新回合
+  resetGame(g, r.start);
+  assert.equal(joinSeason(g, 'new-season', r.start).season, r.id);
+});

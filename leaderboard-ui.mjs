@@ -26,19 +26,19 @@ export function initLeaderboard({request,onToast=()=>{},getContext}={}){
   const dialog=el('dialog','fx-leader-dialog');dialog.id='fx-leader-dialog';dialog.setAttribute('aria-labelledby','fx-leader-title');
   const head=el('div','fx-leader-heading'),title=el('h2','','虛構行情排行榜');title.id='fx-leader-title';title.tabIndex=-1;
   head.append(title,btn('關閉',()=>close()));const body=el('div','fx-leader-body');dialog.append(head,body);document.body.append(dialog);
-  let opener=null,epoch=0,who=identity(),board=null,me=null,loading=false,saving=false,error='';
+  let opener=null,epoch=0,who=identity(),board=null,me=null,loading=false,saving=false,error='',past=null,prevId=null;
   const otherOverlay=()=>[...document.querySelectorAll('[role="dialog"],dialog')].some(n=>n!==dialog&&!dialog.contains(n)&&!n.closest('[hidden],.hidden')&&(n.tagName!=='DIALOG'||n.open)&&n.getClientRects().length>0);
   function close(restore=true){if(!dialog.open)return;epoch++;dialog.close();if(restore&&!otherOverlay())(opener?.isConnected?opener:launch).focus({preventScroll:true})}
   dialog.addEventListener('cancel',e=>{e.preventDefault();close()});
   dialog.addEventListener('click',e=>{if(e.target!==dialog)return;const r=dialog.getBoundingClientRect();if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom)close()});
   dialog.addEventListener('keydown',e=>{if(e.key!=='Tab')return;const a=[...dialog.querySelectorAll('button,input')].filter(n=>!n.disabled&&n.getClientRects().length);if(e.shiftKey&&(document.activeElement===a[0]||document.activeElement===title)){e.preventDefault();a.at(-1)?.focus()}else if(!e.shiftKey&&document.activeElement===a.at(-1)){e.preventDefault();a[0]?.focus()}});
   const valid=(ticket,id)=>dialog.open&&epoch===ticket&&identity()===id;
-  function open(){if(otherOverlay()){onToast('請先完成或關閉目前的視窗。');return}opener=document.activeElement;dialog.showModal();who=identity();board=null;me=null;error='';render();reload();title.focus({preventScroll:true})}
+  function open(){if(otherOverlay()){onToast('請先完成或關閉目前的視窗。');return}opener=document.activeElement;dialog.showModal();who=identity();board=null;me=null;error='';past=null;render();reload();title.focus({preventScroll:true})}
   async function reload(){const ticket=++epoch,id=identity();loading=true;error='';render();
-    try{const settled=await Promise.allSettled([request('list'),signed()?request('me'):Promise.resolve(null)]);
+    try{const settled=await Promise.allSettled([request('list',past?{season:past}:undefined),signed()&&!past?request('me'):Promise.resolve(me)]);
       if(!valid(ticket,id))return;if(settled[0].status==='rejected')throw settled[0].reason;
       const value=settled[0].value?.leaderboard;if(!value||!Array.isArray(value.entries))throw new Error('排行榜資料格式不正確');
-      board=value;const personal=settled[1].status==='fulfilled'?settled[1].value:null;me=personal&&typeof personal.optIn==='boolean'?personal:null;
+      board=value;if(!past&&typeof value.previousSeason==='string')prevId=value.previousSeason;const personal=settled[1].status==='fulfilled'?settled[1].value:null;me=personal&&typeof personal.optIn==='boolean'?personal:null;
     }catch(ex){if(valid(ticket,id))error=ex instanceof Error?ex.message:'暫時無法載入排行榜'}finally{if(valid(ticket,id)){loading=false;render()}}}
   async function mutate(action,nickname){if(!signed()||saving)return;const ticket=++epoch,id=identity();saving=true;error='';render();
     try{const result=await request(action,action==='join'?{nickname}:undefined);if(!valid(ticket,id))return;
@@ -59,20 +59,21 @@ export function initLeaderboard({request,onToast=()=>{},getContext}={}){
       form.addEventListener('submit',e=>{e.preventDefault();const nickname=input.value.trim();if(!nickname||Array.from(nickname).length>16){input.setCustomValidity('暱稱需為 1–16 字');input.reportValidity();return}input.setCustomValidity('');mutate('join',nickname)});
       form.append(label,input,submit);section.append(form)}return section}
   function render(){if(!dialog.open)return;body.replaceChildren();body.append(el('p','fx-leader-intro','僅為虛構行情練習競賽，不是真實交易或投資成績。排行受伺服器賽季、資格與排序規則限制；不保證能杜絕所有不公平行為。'));
-    const controls=el('div','fx-leader-controls'),refresh=btn('重新整理',reload);refresh.disabled=loading||saving;controls.append(refresh);body.append(controls);
+    const controls=el('div','fx-leader-controls'),refresh=btn('重新整理',reload);refresh.disabled=loading||saving;controls.append(refresh);
+    if(past||prevId){const sw=btn(past?'回到本季':`上季排行（${prevId}）`,()=>{past=past?null:prevId;board=null;reload()});sw.disabled=loading||saving;controls.append(sw)}body.append(controls);
     if(loading){const p=el('p','fx-leader-state','正在載入公開排行榜…');p.setAttribute('role','status');body.append(p)}
     if(error){const p=el('p','fx-leader-state fx-leader-error',`載入或設定失敗：${error}。請重新整理再試。`);p.setAttribute('role','alert');body.append(p)}
-    if(board){body.append(el('h3','fx-leader-season',`賽季：${typeof board.season==='string'?board.season:'未提供'}`));body.append(el('p','fx-leader-time',`結束：${date(board.endsAt)} · 列表更新：${date(board.updatedAt)}`));
+    if(board){body.append(el('h3','fx-leader-season',`賽季：${typeof board.season==='string'?board.season:'未提供'}`));body.append(el('p','fx-leader-time',board.archived?`已封存的最終排名 · 封存時間：${date(board.updatedAt)}`:`開始：${date(board.startsAt)} · 結束：${date(board.endsAt)} · 列表更新：${date(board.updatedAt)}`));
       const stamp=board.updatedAt?new Date(board.updatedAt).getTime():NaN;
-      if(!Number.isFinite(stamp)||Date.now()-stamp>120000||navigator.onLine===false)body.append(el('p','fx-leader-lag','資料可能滯後：排行不是即時行情或即時帳戶權益，請以列表更新時間為準。'));
+      if(!board.archived&&(!Number.isFinite(stamp)||Date.now()-stamp>120000||navigator.onLine===false))body.append(el('p','fx-leader-lag','資料可能滯後：排行不是即時行情或即時帳戶權益，請以列表更新時間為準。'));
       if(typeof board.note==='string'&&board.note.trim())body.append(el('p','fx-leader-note',board.note));
-      if(!board.entries.length)body.append(el('p','fx-leader-state','這個賽季還沒有參賽者，歡迎稍後再來看看。'));
+      if(!board.entries.length)body.append(el('p','fx-leader-state',board.archived?'這個賽季沒有封存的排名。':'這個賽季還沒有參賽者，歡迎稍後再來看看。'));
       else{const list=el('ol','fx-leader-list');for(const entry of board.entries){const row=el('li','fx-leader-row'),person=el('div','fx-leader-person'),metric=el('div','fx-leader-metric');
         // Field allowlist and textContent only: never output username, token or arbitrary fields.
         person.append(el('strong','fx-leader-rank',Number.isInteger(entry.rank)&&entry.rank>0?`#${entry.rank}`:'—'),el('span','fx-leader-name',typeof entry.nickname==='string'?entry.nickname:'匿名參賽者'));
         metric.append(el('strong',finite(entry.returnPct)?entry.returnPct>0?'fx-leader-up':entry.returnPct<0?'fx-leader-down':'':'',pct(entry.returnPct)),el('small','',`權益 ${money(entry.equity)}`));
         row.append(person,metric,el('small','fx-leader-detail',`平倉 ${count(entry.closedTrades)} · 重置 ${count(entry.resetCount)} · 成績 ${date(entry.scoreUpdatedAt)}`));list.append(row)}body.append(list)}}
-    body.append(personal(),el('p','fx-leader-foot','只公開暱稱、排名與練習統計；退出後伺服器必須立即從公開列表移除。請勿在暱稱填入個資。'))}
+    if(!past)body.append(personal());body.append(el('p','fx-leader-foot','只公開暱稱、排名與練習統計；退出後伺服器必須立即從公開列表移除。請勿在暱稱填入個資。'))}
   function update(){const id=identity();if(id!==who){who=id;epoch++;board=null;me=null;loading=false;saving=false;error='';if(dialog.open)reload()}if(dialog.open&&otherOverlay())close(false)}
   const observer=new MutationObserver(()=>{if(dialog.open&&otherOverlay())close(false)});observer.observe(document.body,{subtree:true,attributes:true,attributeFilter:['class','hidden','open']});
   return {update}
