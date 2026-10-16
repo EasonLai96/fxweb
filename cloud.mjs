@@ -1,5 +1,5 @@
 // 帳號與伺服器端遊戲 API。token 存在 localStorage，以 Authorization: Bearer 傳給後端。
-import { API_BASE } from "./config.mjs?v=20261016k";
+import { API_BASE } from "./config.mjs?v=20261016l";
 
 const AUTH_KEY = "fxweb.auth.v1";
 export const enabled = () => !!API_BASE;
@@ -52,7 +52,7 @@ export async function logout() { try { await api("POST", "/api/logout"); } catch
 export async function deleteAccount(password) { await api("DELETE", "/api/account", { password }); auth = null; persist(); }
 
 export const me = () => api("GET", "/api/me");
-export const online = tabId => api("POST", "/api/online", { tabId });
+export const online = (tabId, visitorId) => api("POST", "/api/online", { tabId, visitorId });
 export const leaderboard = {
   list: () => api("GET", "/api/leaderboard"),
   me: () => api("GET", "/api/leaderboard/me"),

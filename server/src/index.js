@@ -411,7 +411,9 @@ async function onlineHeartbeat(req, env) {
     throw new HttpError(400, 'bad_tab_id', '瀏覽器識別碼格式錯誤');
   // A token, if supplied, must be valid. Guest requests without a token remain anonymous.
   const user = req.headers.has('Authorization') ? await requireUser(req, env) : null;
-  const data = await presence(env, body.tabId, user?.id ?? null);
+  if (body.visitorId !== undefined && (typeof body.visitorId !== 'string' || !/^[a-f0-9]{32}$/.test(body.visitorId)))
+    throw new HttpError(400, 'bad_visitor_id', '來訪識別碼格式錯誤');
+  const data = await presence(env, body.tabId, user?.id ?? null, Date.now(), body.visitorId ?? null);
   return { status: 200, body: data };
 }
 

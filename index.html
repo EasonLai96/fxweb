@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="assets/apple-touch-icon.png?v=2">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Nunito:wght@600;700;800;900&display=swap">
-<link rel="stylesheet" href="styles.css?v=20261016k">
+<link rel="stylesheet" href="styles.css?v=20261016l">
 </head>
 <body>
 <div class="app-shell">
@@ -24,6 +24,7 @@
     <div class="top-actions">
       <span class="session-pill"><span class="live-dot"></span>模擬帳戶</span>
       <span id="onlineCount" class="session-pill" role="status" title="最近 75 秒內活躍的登入帳號和訪客分頁">在線 —</span>
+      <span id="visitorCount" class="session-pill" title="不同瀏覽器的累計來訪人數（同一瀏覽器只算一次，清除瀏覽資料會重新計算）">累計來訪 —</span>
       <button id="accountBtn" class="account-btn hidden" type="button"><span class="sync-dot" id="syncDot"></span><span id="accountLabel">登入</span></button>
       <button id="themeBtn" class="text-button" type="button">夜間</button>
       <button id="battleBtn" class="text-button" type="button">經典戰役</button>
@@ -288,6 +289,6 @@
   </div>
 </div>
 
-<script type="module" src="app.mjs?v=20261016k"></script>
+<script type="module" src="app.mjs?v=20261016l"></script>
 </body>
 </html>

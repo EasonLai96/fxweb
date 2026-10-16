@@ -506,5 +506,8 @@ test('online API includes anonymous guests, deduplicates authenticated tabs and 
   r = await call('POST','/api/online',{body:{tabId:tab(1)},token:user.token});
   assert.deepEqual([r.body.online,r.body.guests,r.body.players],[1,0,1]);
   assert.equal((await call('POST','/api/online',{body:{tabId:'bad'}})).status,400);
+  r = await call('POST','/api/online',{body:{tabId:tab(5),visitorId:tab(77)}});
+  assert.equal(r.body.totalVisitors,1);
+  assert.equal((await call('POST','/api/online',{body:{tabId:tab(5),visitorId:'x'}})).status,400);
   assert.equal((await call('POST','/api/online',{body:{tabId:tab(4)},token:'invalidtokenwithlengthok'})).status,401);
 });

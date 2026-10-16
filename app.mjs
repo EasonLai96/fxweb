@@ -1,17 +1,25 @@
-import { initExtras } from "./extras.mjs?v=20261016k";
-import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261016k";
-import * as E from "./engine.mjs?v=20261016k";
-import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261016k";
-import * as Store from "./store.mjs?v=20261016k";
-import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261016k";
-import * as Cloud from "./cloud.mjs?v=20261016k";
-import { createRemoteMarket } from "./remote.mjs?v=20261016k";
-import { createAchievementBook } from "./achievements.mjs?v=20261016k";
-import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261016k";
+import { initExtras } from "./extras.mjs?v=20261016l";
+import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261016l";
+import * as E from "./engine.mjs?v=20261016l";
+import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261016l";
+import * as Store from "./store.mjs?v=20261016l";
+import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261016l";
+import * as Cloud from "./cloud.mjs?v=20261016l";
+import { createRemoteMarket } from "./remote.mjs?v=20261016l";
+import { createAchievementBook } from "./achievements.mjs?v=20261016l";
+import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261016l";
 
 const THEME_KEY = "fxweb.theme";
 // One random id per tab lifetime; never derive presence from username or IP.
 const onlineTabId = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
+// 歷史來訪：每個瀏覽器保存一個隨機 ID，只用來判斷「是不是第一次來」。
+const visitorId = (() => {
+  try {
+    let v = localStorage.getItem("fxweb.visitor");
+    if (!/^[a-f0-9]{32}$/.test(v || "")) { v = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join(''); localStorage.setItem("fxweb.visitor", v); }
+    return v;
+  } catch { return undefined; }
+})();
 let onlinePending = false, onlineAt = 0, onlineSuccessAt = 0;
 // 兩種模式：
 //   guest  = 訪客，行情與帳戶都在瀏覽器裡算（可被修改，不計成績）
@@ -762,10 +770,11 @@ async function updateOnline(force = false) {
   if (!Cloud.enabled() || document.hidden || onlinePending || (!force && Date.now() - onlineAt < 20_000)) return;
   onlinePending = true; onlineAt = Date.now();
   try {
-    const data = await Cloud.online(onlineTabId);
+    const data = await Cloud.online(onlineTabId, visitorId);
     onlineSuccessAt = Date.now();
     $("onlineCount").textContent = `在線 ${data.online} 人`;
     $("onlineCount").title = `最近 ${data.windowSeconds} 秒活躍：登入 ${data.players}、訪客 ${data.guests}（訪客依分頁計）`;
+    if (data.totalVisitors > 0) $("visitorCount").textContent = `累計來訪 ${data.totalVisitors.toLocaleString("zh-TW")}`;
   } catch {
     if (Date.now() - onlineSuccessAt > 75_000) $("onlineCount").textContent = '在線 —';
   } finally { onlinePending = false; }
