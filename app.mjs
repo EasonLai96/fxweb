@@ -1,13 +1,13 @@
-import { initExtras } from "./extras.mjs?v=20261016i";
-import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261016i";
-import * as E from "./engine.mjs?v=20261016i";
-import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261016i";
-import * as Store from "./store.mjs?v=20261016i";
-import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261016i";
-import * as Cloud from "./cloud.mjs?v=20261016i";
-import { createRemoteMarket } from "./remote.mjs?v=20261016i";
-import { createAchievementBook } from "./achievements.mjs?v=20261016i";
-import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261016i";
+import { initExtras } from "./extras.mjs?v=20261016j";
+import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261016j";
+import * as E from "./engine.mjs?v=20261016j";
+import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261016j";
+import * as Store from "./store.mjs?v=20261016j";
+import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261016j";
+import * as Cloud from "./cloud.mjs?v=20261016j";
+import { createRemoteMarket } from "./remote.mjs?v=20261016j";
+import { createAchievementBook } from "./achievements.mjs?v=20261016j";
+import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261016j";
 
 const THEME_KEY = "fxweb.theme";
 // One random id per tab lifetime; never derive presence from username or IP.
@@ -276,9 +276,7 @@ function renderOrder(prices, m) {
 
 function maxMargin(prices) {
   const valuation = mode === "server" && settledPrices ? settledPrices : prices;
-  const affordable = E.maxAffordableMargin(E.freeMargin(state, valuation), ui.leverage);
-  const depth = mode === "server" ? execution?.maxNotional?.[ui.pair] : null;
-  return depth ? Math.min(affordable, Math.floor(depth / ui.leverage * 100) / 100) : affordable;
+  return E.maxAffordableMargin(E.freeMargin(state, valuation), ui.leverage); // 不設單筆最大金額
 }
 
 async function order(side) {

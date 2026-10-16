@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createMarketState } from '../../market.mjs';
 import { absoluteTick, sharedPrice } from '../src/shared-market.js';
-import { EXECUTION_START, maxMarketNotional, executionPrice } from '../src/execution.js';
+import { EXECUTION_START, executionPrice } from '../src/execution.js';
 import { newGame, ensureMarketMode, advance, openOrder, closeOrder, view, resetGame, TICK_MS, MAX_CATCHUP, MAX_HOLD_MS } from '../src/game.js';
 
 const secret = 'ab'.repeat(32);
@@ -37,15 +37,19 @@ test('新規則只影響生效後新倉：方向價差、滑價、分批流動�
   const short = openOrder(g, {pair, side:-1, leverage:100, margin:100}, t, secret);
   assert.ok(long.entry > mid && short.entry < mid);
   assert.ok(executionPrice(mid, pair, 1, 1e8, t) > long.entry, '大單比小單成交較差');
-  assert.throws(() => openOrder(g, {pair, side:1, leverage:100, margin:1e7}, t, secret), /單筆流動性不足/);
+  // 不設單筆最大金額：超大單仍可成交，只是滑價封頂 0.12%。
+  const rich = newGame(t, secret); rich.account.cash = 1e15;
+  const huge = openOrder(rich, {pair, side:1, leverage:100, margin:1e10}, t, secret);
+  assert.ok(huge.notional === 1e12 && huge.entry <= mid * 1.0012 + 1e-12, '遠超舊上限仍可成交');
+  const maxed = openOrder(rich, {pair, side:-1, leverage:100, margin:10, max:true}, t, secret);
+  assert.ok(maxed.margin > 1e13, 'MAX 使用全部可用保證金，不再被單筆上限截斷');
   const later=t+TICK_MS;
   advance(g, later, secret);
   assert.ok(long.carryPaid>0 && short.carryPaid>0);
   const pnl=closeOrder(g,long.id,later,secret);
   assert.ok(g.account.log.at(-1).price < sharedPrice(secret,absoluteTick(later),pair), '多單以 bid 賣出');
   assert.ok(Number.isFinite(pnl));
-  const limit=maxMarketNotional('BTC');
-  assert.ok(limit < maxMarketNotional(pair), '虛擬幣深度小於外匯');
+  assert.ok(executionPrice(100,'BTC',1,1e6,t) > executionPrice(100,pair,1,1e6,t), '虛擬幣滑價大於外匯');
 });
 
 test('behind account values at cursor, but displays head tape separately and disallows trading', () => {

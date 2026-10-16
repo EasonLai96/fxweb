@@ -11,12 +11,10 @@ const LIQUIDITY = {
   etf: { halfSpread: .00008, depth: 8e6, impact: .00028, annualCarry: .065 },
   crypto: { halfSpread: .00025, depth: 1e6, impact: .00065, annualCarry: .10 },
 };
-// 單筆最多吃 10 倍示意深度；帳戶總資產無上限，可以拆成多單。
-export const maxMarketNotional = pair => LIQUIDITY[kindOf(pair)].depth * 10;
+// 不設單筆最大成交金額；大單只會因滑價成交較差（每腿上限 0.12%）。
 export function friction(pair, notional, time) {
   const p = LIQUIDITY[kindOf(pair)];
   if (!(Number.isFinite(notional) && notional > 0)) throw new RangeError('名目金額無效');
-  if (notional > maxMarketNotional(pair)) throw new RangeError('超過單筆流動性，請拆單');
   const stress = Math.floor(time / 1500) % 20 < 2 ? 1.7 : 1;
   // 成本隨訂單增大，但封頂以免 100× 幣圈 MAX 因成本直接接近 80% 強平。
   // 仍有價差及深度限制，不是免費成交；示意上限是每腿名目的 0.12%。

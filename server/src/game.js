@@ -5,7 +5,7 @@ import { ensureProgress, recordOpen, recordClose, resetProgress, progressView } 
 import { createMarketState, secureMarketState, stepMarket, publicNews, PAIRS, NEWS_SETTLE } from "../../market.mjs";
 import { absoluteTick, makeSharedMarket, sharedPricer } from "./shared-market.js";
 import { SENTIMENT_START, sentimentAt } from "./sentiment.js";
-import { EXECUTION_START, EXECUTION_VERSION, maxMarketNotional, executionPrice, carryCharge } from "./execution.js";
+import { EXECUTION_START, EXECUTION_VERSION, executionPrice, carryCharge } from "./execution.js";
 
 export const TICK_MS = 1500;
 export const MAX_CATCHUP = 600;
@@ -241,13 +241,18 @@ export function openOrder(g, { pair, side, leverage, margin, max = false }, now,
   const realistic = shared(g) && now >= EXECUTION_START;
   if (max === true) {
     const affordable = E.maxAffordableMargin(E.freeMargin(g.account, prices), leverage);
-    // MAX 只吃此商品一次可成交的深度；高資產可拆成多張市價單。
-    margin = realistic ? Math.min(affordable, Math.floor(maxMarketNotional(pair) / leverage * 100) / 100) : affordable;
+    // MAX = 全部可用保證金；不設單筆最大金額。
+    // 開倉檢查會以成交價重估同商品舊倉，所以要按成交價反覆收斂，否則大帳戶 MAX 會誤報不足。
+    margin = affordable;
+    if (realistic) for (let i = 0; i < 4 && margin >= 10; i++) {
+      const fill = { ...prices, [pair]: executionPrice(prices[pair], pair, side, margin * leverage, now) };
+      const next = E.maxAffordableMargin(E.freeMargin(g.account, fill), leverage);
+      if (next >= margin) break;
+      margin = Math.floor(next * 0.999999 * 100) / 100;
+    }
     if (margin < 10) throw new GameError('可用保證金不足');
   }
   const notional = margin * leverage;
-  if (realistic && notional > maxMarketNotional(pair))
-    throw new GameError(`單筆流動性不足，最多成交名目 $${maxMarketNotional(pair).toLocaleString('en-US')}，請拆單`);
   // Preserve the exact order time: expiry occurs on the first historical tick
   // at/after openedAt + seven days, never up to 1499 ms early.
   const fillPrices = realistic ? { ...prices, [pair]: executionPrice(prices[pair], pair, side, notional, now) } : prices;
@@ -352,8 +357,8 @@ export function view(g, since, events = [], now = Date.now(), marketSecret, sent
     prices: headPrices, candles,
     sentiment: isShared && step >= SENTIMENT_START ? Object.fromEntries(pairs.map(p => [p, sentimentAt(sentiment, step, p)])) : null,
     execution: isShared && now >= EXECUTION_START ? {
-      mode: '示意市價成交', version: EXECUTION_VERSION, maxNotional: Object.fromEntries(pairs.map(p => [p, maxMarketNotional(p)])),
-      note: '價格有買賣價差及大單滑價，借用槓桿資金按真實時間計息。單筆市價單有流動性上限；可拆單。非真實券商費率。',
+      mode: '示意市價成交', version: EXECUTION_VERSION,
+      note: '價格有買賣價差及大單滑價，借用槓桿資金按真實時間計息。不設單筆最大金額，大單滑價較多。非真實券商費率。',
     } : null,
     news: isShared ? m.news.filter(n => n.step > newsFrom) : m.news.filter(n => n.step > newsFrom).map(n => publicNews(n, step)),
     account: { cash: a.cash, startingCash: a.startingCash, nextId: a.nextId,
