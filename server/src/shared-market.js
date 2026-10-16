@@ -73,12 +73,46 @@ export function absoluteTick(now = Date.now()) {
 }
 export const tickAt = absoluteTick;
 // Request-scoped memo; prices at t consume ONLY HMAC domains timestamped <= t.
+// HMAC 摘要只取決於 (secret, domain, tick, pair)，跟玩家、情緒資料都無關，
+// 所以可以安全地跨請求共用（同一個 Worker isolate 內）。所有登入玩家看的是同一條行情，
+// 完整快照（約 6,300 次 HMAC）大部分摘要都已被前一個請求算過，CPU 因此大降。
+// 只快取摘要，不快取價格：價格會受情緒快照影響，仍由每個請求自己算，輸出逐位元不變。
+const DIGEST_CACHE_MAX = 40000;
+const sharedDigests = new Map(); // secret -> { mac, map: domain -> pair -> tick -> digest, size }
+function digestStore(secret) {
+  let s = sharedDigests.get(secret);
+  if (!s) {
+    if (sharedDigests.size >= 4) sharedDigests.clear();
+    s = { mac: hmacKey(keyBytes(secret)), map: new Map(), size: 0 };
+    sharedDigests.set(secret, s);
+  }
+  return s;
+}
+export function _digestCacheSize() { let n = 0; for (const s of sharedDigests.values()) n += s.size; return n; }
+export function _clearDigestCache() { sharedDigests.clear(); }
 function context(secret, sentiment) {
-  const mac = hmacKey(keyBytes(secret)), digests = new Map(), quotes = new Map(), bars = new Map(), reports = new Map();
+  keyBytes(secret);
+  const store = digestStore(secret), mac = store.mac, reports = new Map();
+  // 每個請求自己的價格／K 線快取（商品 → tick），一樣不組字串鍵。
+  const quoteBy = Object.create(null), barBy = Object.create(null);
+  const tickMap = (o,p) => o[p] || (o[p] = new Map());
+  // 三層 Map（網域 → 商品 → tick），查快取時不必每次組字串。
   function digest(domain,t,p='') {
-    const id = `${domain}|${t}|${p}`;
-    let d = digests.get(id);
-    if (d === undefined) { d = mac(enc.encode(`${SHARED_MARKET_ALGORITHM}|${id}`)); digests.set(id,d); }
+    let byPair = store.map.get(domain);
+    if (byPair === undefined) { byPair = new Map(); store.map.set(domain, byPair); }
+    let byTick = byPair.get(p);
+    if (byTick === undefined) { byTick = new Map(); byPair.set(p, byTick); }
+    let d = byTick.get(t);
+    if (d === undefined) {
+      d = mac(enc.encode(`${SHARED_MARKET_ALGORITHM}|${domain}|${t}|${p}`));
+      if (store.size >= DIGEST_CACHE_MAX) {
+        // 太大就整個清掉重來；行情只往前走，新請求很快會把需要的摘要補回來。
+        store.map.clear(); store.size = 0;
+        byPair = new Map(); store.map.set(domain, byPair);
+        byTick = new Map(); byPair.set(p, byTick);
+      }
+      byTick.set(t, d); store.size++;
+    }
     return d;
   }
   // 讀 4 個位元組為大端序 uint32（與原本的 DataView.getUint32 相同），再換成 [0,1)。
@@ -99,8 +133,8 @@ function context(secret, sentiment) {
   }
   function price(t,p) {
     checkTick(t); checkPair(p);
-    const id=`${t}|${p}`;
-    if (quotes.has(id)) return quotes.get(id);
+    const quotes=tickMap(quoteBy,p), id=t;
+    const cached=quotes.get(id); if (cached !== undefined) return cached;
     if (isEtf(p) && t>ETF_SWITCH) { let v=etfPrice(t,p); const tilt=crowdLog(t,p); if (tilt) v*=Math.exp(tilt); v=softenRise(v,t,p); quotes.set(id,v); return v; }
     const start=Math.floor(t/SPAN)*SPAN, x=(t-start)/SPAN, smooth=x*x*(3-2*x);
     // The current anchor first becomes available at 'start'; never read the NEXT anchor.
@@ -220,8 +254,8 @@ function context(secret, sentiment) {
   }
   function candle(t,p) {
     checkTick(t); checkPair(p);
-    const id=`${t}|${p}`;
-    if (bars.has(id)) return bars.get(id);
+    const bars=tickMap(barBy,p), id=t;
+    const cached=bars.get(id); if (cached !== undefined) return cached;
     const o=t ? price(t-1,p):PAIRS[p], c=price(t,p), bytes=digest('wick',t,p);
     // ETF 切換後波動變小，影線也跟著縮小（切換前的舊 K 線不變）。
     const w=isEtf(p)&&t>ETF_SWITCH ? 0.00012*INSTRUMENTS[p].risk : 0.00045*volOf(p);

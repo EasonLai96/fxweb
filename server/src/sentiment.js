@@ -43,6 +43,8 @@ export function sentimentLog(snapshots, tick, pair, draw = 0.5) {
 export async function captureSentiment(env, time) {
   const bucket = Math.floor(time / (SENTIMENT_BUCKET * 1500));
   if (bucket * SENTIMENT_BUCKET < SENTIMENT_START - SENTIMENT_BUCKET) return false;
+  // 排程每分鐘跑，但快照每 5 分鐘才一格；這格已經存過就不必再掃全部玩家的持倉。
+  if (await env.DB.prepare('SELECT 1 FROM sentiment_snapshots WHERE bucket = ?').bind(bucket).first()) return false;
   // Aggregate on cron, never in the hot polling path. Dormant or legacy accounts excluded.
   const result = await env.DB.prepare(`WITH votes AS (
     SELECT g.user_id AS uid, j.value ->> '$.pair' AS pair,
