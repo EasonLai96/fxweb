@@ -32,6 +32,16 @@ test('pickEvent：每種事件都抽得到、漲跌方向與範圍正確', () =>
   for (let i = 0; i < 500; i++) { const ev = pickEvent(r, FX_KEYS); if (ev) assert.ok(Object.keys(ev.moves).every(p => FX_KEYS.includes(p))); }
 });
 
+test('外匯不被重大事件改寫：開始後一年的黃金對照報價不變', () => {
+  const at = sharedPricer(secret);
+  // 由舊版（5d1f62b）的純外匯公式算出，改版事件不應改寫它們。
+  assert.equal(at(EVENT_START + 2500, 'EUR/USD'), 1.0870474973570807);
+  assert.equal(at(EVENT_START + 2500, 'AUD/USD'), 0.659758067234897);
+  assert.equal(at(EVENT_START + 2500, 'USD/JPY'), 149.8237980364051);
+  for (const e of findEvents(EVENT_START, EVENT_START + 57600))
+    assert.ok(!Object.keys(e.moves).some(p => FX_KEYS.includes(p)), `外匯不可被 ${e.event} 改寫`);
+});
+
 test('事件形狀：瞬間跳到底、維持、再回到 0', () => {
   assert.equal(eventShape(-1), 0); assert.equal(eventShape(0), 0.6); assert.equal(eventShape(2), 1); assert.equal(eventShape(39), 1);
   assert.ok(eventShape(300) > 0 && eventShape(300) < 1); assert.equal(eventShape(EVENT_SPAN), 0);
@@ -90,6 +100,20 @@ test('本機行情：舊存檔（沒有事件欄位）推進結果與改版前�
   const m = createMarket(11); let n = 0;
   for (let i = 0; i < 6000; i++) if (m.tick().event) n++;
   assert.ok(n >= 8 && n <= 40, `6000 根 ${n} 次`);
+});
+
+test('舊訪客存檔保留 ETF 舊行情節奏，新建存檔改採較穩定波動', () => {
+  const old = createMarketState(19, { warmup: 90 });
+  delete old.etfStable;
+  const fresh = createMarketState(19, { warmup: 90 });
+  assert.equal(fresh.etfStable, 1);
+  let changed = false;
+  for (let i = 0; i < 200; i++) {
+    stepMarket(old); stepMarket(fresh);
+    if (old.prices.SPY !== fresh.prices.SPY) changed = true;
+    assert.equal(old.prices['EUR/USD'], fresh.prices['EUR/USD']);
+  }
+  assert.ok(changed, '新建 ETF 行情應更穩定');
 });
 
 test('資產超過 10 億時仍可下單（以前會誤報「保證金至少 $10」）', () => {

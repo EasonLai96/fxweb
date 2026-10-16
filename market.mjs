@@ -52,11 +52,15 @@ export const PAIR_NAMES = {
 // 商品分類與計價。ETF／虛擬幣的損益 = 方向 ×（現價 / 進場價 − 1）× 名目（美元），
 // 和 XXX/USD 的公式完全相同，所以新台幣計價的 ETF 不需要換匯，帳戶仍以美元結算。
 // vol：相對外匯的波動倍數（外匯 = 1，數值完全不變）。digits：報價小數位數。
+// ETF 另有「真實化」參數（2026-10-16 起）：
+//   mu = 長期年化報酬（參考長期歷史，保守估計）；risk = 相對 SPY 的波動（SPY 真實年化波動約 17%）；
+//   localVol = 訪客本機行情用的波動倍數（本機行情節奏較快，維持和外匯差不多）。
+//   vol 欄位是改版前共用行情的舊參數，只用於改版時間點之前的歷史價格，不可修改。
 export const INSTRUMENTS = {
-  "0050":  { kind: "etf", ccy: "TWD", vol: 1.8, digits: 2 },
-  "00878": { kind: "etf", ccy: "TWD", vol: 1.2, digits: 2 },
-  "SPY":   { kind: "etf", ccy: "USD", vol: 1.5, digits: 2 },
-  "QQQ":   { kind: "etf", ccy: "USD", vol: 2.2, digits: 2 },
+  "0050":  { kind: "etf", ccy: "TWD", vol: 1.8, digits: 2, mu: 0.10, risk: 1.35, localVol: 0.9 },
+  "00878": { kind: "etf", ccy: "TWD", vol: 1.2, digits: 2, mu: 0.07, risk: 0.9,  localVol: 0.6 },
+  "SPY":   { kind: "etf", ccy: "USD", vol: 1.5, digits: 2, mu: 0.10, risk: 1.0,  localVol: 0.7 },
+  "QQQ":   { kind: "etf", ccy: "USD", vol: 2.2, digits: 2, mu: 0.12, risk: 1.35, localVol: 0.9 },
   "BTC":   { kind: "crypto", ccy: "USD", vol: 6, digits: 1 },
   "ETH":   { kind: "crypto", ccy: "USD", vol: 7, digits: 2 },
   "SOL":   { kind: "crypto", ccy: "USD", vol: 9, digits: 2 },
@@ -66,6 +70,7 @@ export const kindOf = p => INSTRUMENTS[p]?.kind ?? "fx";
 export const isEtf = p => kindOf(p) === "etf";
 export const isCrypto = p => kindOf(p) === "crypto";
 export const volOf = p => INSTRUMENTS[p]?.vol ?? 1;
+export const localVolOf = p => INSTRUMENTS[p]?.localVol ?? volOf(p);
 export const FX_KEYS = Object.keys(PAIRS).filter(p => kindOf(p) === "fx");
 export const ETF_KEYS = Object.keys(PAIRS).filter(isEtf);
 export const CRYPTO_KEYS = Object.keys(PAIRS).filter(isCrypto);
@@ -84,10 +89,9 @@ export const EVENT_TYPES = [
   { id: "crypto-moon",  w: 3, text: "現貨 ETF 資金狂灌，幣圈全面噴出", hits: [["crypto", 0.25, 0.6]] },
   { id: "coin-rug",     w: 2, text: "{p} 核心團隊傳出捲款跑路，幣價瞬間腰斬", hits: [["crypto1", -0.75, -0.45]] },
   { id: "coin-pump",    w: 2, text: "馬斯克深夜發文力挺 {p}，散戶瘋狂湧入", hits: [["crypto1", 0.5, 1.5]] },
-  { id: "stock-crash",  w: 2, text: "美股盤中熔斷！程式交易引發連環賣壓", hits: [["etf", -0.14, -0.07], ["crypto", -0.2, -0.1]] },
-  { id: "stock-rally",  w: 2, text: "聯準會意外降息兩碼，股市狂飆", hits: [["etf", 0.05, 0.1], ["crypto", 0.08, 0.2]] },
-  { id: "fx-swan",      w: 2, text: "{p} 央行無預警放棄匯率目標，匯價瞬間跳空", hits: [["fx1", 0.03, 0.08, true]] },
-  { id: "meltdown",     w: 1, text: "全球金融海嘯：系統性風險全面爆發", hits: [["crypto", -0.6, -0.35], ["etf", -0.18, -0.1], ["AUD/USD", -0.05, -0.03], ["USD/JPY", -0.06, -0.03]] },
+  // 外匯的共用行情必須逐位元維持不變；重大事件只作用於虛擬幣，極少數海嘯也作用於 ETF。
+  // ETF 參考真實最慘單日（SPY 2020-03 約 −11%）；海嘯平均約一天一次。
+  { id: "meltdown",     w: 0.065, text: "全球金融海嘯：系統性風險全面爆發", hits: [["crypto", -0.6, -0.35], ["etf", -0.12, -0.07]] },
 ];
 const EVENT_W = EVENT_TYPES.reduce((s, e) => s + e.w, 0);
 // 依序取用均勻亂數 r() 決定事件內容；共用行情（HMAC）與本機行情（nextRand）共用同一份規則。
@@ -290,6 +294,7 @@ export function createMarketState(seed = 20261015, { warmup = 90, history = HIST
   for (let i = 0; i < warmup; i++) stepMarket(ms);
   ms.news = [];
   ms.ev = [];   // 進行中的重大事件（暖機後才開啟，開場不會馬上崩盤）
+  ms.etfStable = 1; // 舊訪客存檔沒有此欄；保留它們原本的 ETF 價格演算法
   return ms;
 }
 
@@ -305,7 +310,7 @@ function maybeNews(ms) {
   const [text, claimed] = list[Math.floor(nextRand(ms) * list.length)];
   const reversed = nextRand(ms) < 0.24;
   const actual = reversed ? -claimed : claimed;
-  ms.bias[pair] = { v: actual * 0.0009 * volOf(pair), left: NEWS_SETTLE };
+  ms.bias[pair] = { v: actual * 0.0009 * (ms.etfStable ? localVolOf(pair) : volOf(pair)), left: NEWS_SETTLE };
   const item = { step: ms.step, pair, text, claimed, reversed };
   ms.news.push(item);
   if (ms.news.length > NEWS_KEEP) ms.news.shift();
@@ -335,7 +340,7 @@ function eventFactor(ms, p) {
 function candleFor(ms, p) {
   const prevClose = ms.prices[p];
   let open = prevClose * eventFactor(ms, p);   // 重大事件 = 開盤直接跳空
-  const vol = volOf(p);   // 外匯 = 1，算式結果與加入 ETF 前完全相同
+  const vol = ms.etfStable ? localVolOf(p) : volOf(p); // 舊訪客存檔仍沿用舊波動，外匯始終 = 1
   if (nextRand(ms) < 0.018) open *= 1 + (nextRand(ms) < 0.5 ? -1 : 1) * 0.0095 * vol;
   let x = open, hi = open, lo = open;
   const b = ms.bias[p];
@@ -348,7 +353,7 @@ function candleFor(ms, p) {
   }
   if (b.left > 0) b.left--;
   // ETF／虛擬幣：每根輕微拉回基準價（半衰期約 350 根），避免高波動商品越漂越遠。外匯不套用，數值不變。
-  if (vol !== 1) { const pull = Math.exp(-0.002 * Math.log(x / PAIRS[p])); x *= pull; hi *= pull; lo *= pull; }
+  if (vol !== 1 || (ms.etfStable && kindOf(p) !== "fx")) { const pull = Math.exp(-0.002 * Math.log(x / PAIRS[p])); x *= pull; hi *= pull; lo *= pull; }
   x = Math.max(0.0001, x); lo = Math.max(0.0001, lo);
   ms.prices[p] = x;
   // K 線只用來顯示，四捨五入到 7 位有效數字以縮小存檔；真正的價格 ms.prices 保持完整精度。

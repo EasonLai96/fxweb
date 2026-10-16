@@ -1,6 +1,6 @@
 // Fictional shared tape. The 256-bit secret must come ONLY from Worker env.
 // No secret, HMAC digest or future news result belongs in D1, API or logs.
-import { hmacKey, PAIRS, NEWS_SETTLE, FX_KEYS, ETF_KEYS, CRYPTO_KEYS, volOf, pickEvent, eventShape, EVENT_SPAN } from '../../market.mjs';
+import { hmacKey, PAIRS, INSTRUMENTS, isEtf, NEWS_SETTLE, FX_KEYS, ETF_KEYS, CRYPTO_KEYS, volOf, pickEvent, eventShape, EVENT_SPAN } from '../../market.mjs';
 export const TICK_MS = 1500;
 export const SHARED_MARKET_ALGORITHM = 'fxweb/shared/hmac-sha256-causal-v1';
 // PAIR_KEYS 包含 ETF（價格、K 線都會算）。新聞則分兩條獨立的 HMAC 串流：
@@ -11,8 +11,15 @@ const SPAN = 64, KEEP_NEWS = 50, PAIR_KEYS = Object.keys(PAIRS), enc = new TextE
 // 時間切成每 EVENT_BUCKET 根一格；每格用一個 HMAC 決定「這格有沒有事件、在第幾根、是什麼事件」。
 // 事件當根價格瞬間跳空（約 6 成在第一根、剩下兩根內補完），維持 EVENT_HOLD 根後，
 // 在 EVENT_DECAY 根內平滑回到原本走勢。EVENT_START 之前完全沒有事件，所以既有歷史價格逐位元不變。
-export const EVENT_START = Date.UTC(2026, 9, 16, 2, 0, 0) / 1500;   // 2026-10-16 10:00（台灣時間）起
+export const EVENT_START = Date.UTC(2026, 9, 16, 8, 0, 0) / 1500;   // 2026-10-16 16:00（台灣時間）起（ETF 調整前先延後）
 export const EVENT_BUCKET = 200;      // 200 根 ≈ 5 分鐘
+// ETF 行情參數（照真實日曆：1 根 = 1.5 秒，一年 = 21,024,000 根）
+const YEAR_TICKS = 365 * 57600;
+// 切換時間：之前的 ETF 價格沿用舊算式（已經送給玩家的歷史 K 線不改），之後改用真實化算式，
+// 並以切換那一根的舊價格為起點接續，價格連續、不會跳。
+export const ETF_SWITCH = Date.UTC(2026, 9, 16, 4, 0, 0) / 1500;   // 2026-10-16 12:00（台灣時間），必須在上線後才生效
+const ETF_SIGMA = 0.17;                                      // SPY 真實年化波動約 17%
+const ETF_SPANS = [64, 2400, 57600, 57600 * 21, 57600 * 182];
 export const EVENT_CHANCE = 0.45;     // 每 5 分鐘 45% 機率 → 平均約 11 分鐘一次
 
 const HEADLINES = {
@@ -58,6 +65,7 @@ function context(secret) {
     checkTick(t); checkPair(p);
     const id=`${t}|${p}`;
     if (quotes.has(id)) return quotes.get(id);
+    if (isEtf(p) && t>ETF_SWITCH) { const v=etfPrice(t,p); quotes.set(id,v); return v; }
     const start=Math.floor(t/SPAN)*SPAN, x=(t-start)/SPAN, smooth=x*x*(3-2*x);
     // The current anchor first becomes available at 'start'; never read the NEXT anchor.
     const trend=anchor(start-SPAN,p)*(1-smooth)+anchor(start,p)*smooth;
@@ -69,6 +77,33 @@ function context(secret) {
     const shock=t>=EVENT_START ? shockLog(t,p) : 0;
     if (shock) result*=Math.exp(shock);
     quotes.set(id,result); return result;
+  }
+  // ===== ETF：比照真實市場（照真實日曆）=====
+  // log 價格 = 長期年化報酬 × 經過年數 + 多尺度雜訊（1.6 分鐘、1 小時、1 天、3 週、半年）。
+  // 每個尺度的振幅依「真實年化波動 × √(尺度/一年)」設定，所以從分鐘到月的波動都接近真實 ETF；
+  // 每個尺度只讀取「目前這一段起點以前」的錨點，不會用到未來資料。
+  function octave(t,p,span,amp) {
+    const start=Math.floor(t/span)*span, x=(t-start)/span, s=x*x*(3-2*x);
+    const a=at=>at<0 ? 0 : (u(digest('etf-anchor-'+span,at,p))*2-1)*amp;
+    return a(start-span)*(1-s)+a(start)*s;
+  }
+  function etfPrice(t,p) {
+    const {mu,risk}=INSTRUMENTS[p], sig=ETF_SIGMA*risk;
+    return etfBase(p)*Math.exp(etfLog(t,p,mu,sig)-etfLog(ETF_SWITCH,p,mu,sig)+(t>=EVENT_START ? shockLog(t,p) : 0));
+  }
+  function etfLog(t,p,mu,sig) {
+    let x=mu*(t-ETF_SWITCH)/YEAR_TICKS;
+    for(const span of ETF_SPANS) x+=octave(t,p,span,sig*Math.sqrt(1.1*span/YEAR_TICKS));
+    // 每根的小雜訊（三根平滑，跟外匯一樣），讓 K 線有正常的漲跌。
+    let jitter=0;
+    for(let lag=0;lag<3;lag++) jitter += [0.5,0.32,0.18][lag]*(u(digest('etf-noise',t-lag,p))*2-1);
+    return x+jitter*sig*Math.sqrt(3/YEAR_TICKS)*1.6;
+  }
+  // 切換那一根的價格（舊算式），作為新算式的起點。
+  const bases=new Map();
+  function etfBase(p) {
+    if (!bases.has(p)) bases.set(p,price(ETF_SWITCH,p));
+    return bases.get(p);
   }
   // 第 b 格的事件（或 null）。HMAC 網域時間戳＝格子起點 ≤ 事件時間，只有事件時間到了才會被使用。
   const eventsByBucket=new Map();
@@ -112,7 +147,8 @@ function context(secret) {
     const id=`${t}|${p}`;
     if (bars.has(id)) return bars.get(id);
     const o=t ? price(t-1,p):PAIRS[p], c=price(t,p), bytes=digest('wick',t,p);
-    const w=0.00045*volOf(p);
+    // ETF 切換後波動變小，影線也跟著縮小（切換前的舊 K 線不變）。
+    const w=isEtf(p)&&t>ETF_SWITCH ? 0.00012*INSTRUMENTS[p].risk : 0.00045*volOf(p);
     const h=Math.max(o,c)*(1+u(bytes)*w), l=Math.min(o,c)*(1-u(bytes,4)*w);
     const r=v=>Number(v.toPrecision(7));
     const bar={t,o:r(o),h:r(h),l:r(l),c:r(c)};

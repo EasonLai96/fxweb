@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as E from '../../engine.mjs';
 import { PAIRS, ETF_KEYS, FX_KEYS, isEtf, priceDigits, createMarketState, stepMarket } from '../../market.mjs';
-import { makeSharedMarket, sharedPrice } from '../src/shared-market.js';
+import { makeSharedMarket, sharedPrice, ETF_SWITCH, EVENT_START } from '../src/shared-market.js';
 import { newGame, advance, openOrder, closeOrder, view, TICK_MS } from '../src/game.js';
 
 const secret = 'ef'.repeat(32);
@@ -35,6 +35,31 @@ test('共用行情：ETF 有價格、K 線，波動比外匯大', () => {
     assert.ok(m.prices[p] > PAIRS[p] * 0.8 && m.prices[p] < PAIRS[p] * 1.2);
     assert.ok(spread(p) > spread('EUR/USD'), `${p} 波動應大於 EUR/USD`);
   }
+});
+
+test('ETF 切換前報價不回溯改寫；切換後價格連續、波動接近真實日曆', () => {
+  const key = '77'.repeat(32);
+  const oldAtSwitch = { '0050': 52.20048960639996, '00878': 21.253364397703162,
+    SPY: 654.6357608718295, QQQ: 614.5267492093564 };
+  const DAY = 57600;
+  for (const p of ETF_KEYS) {
+    assert.equal(sharedPrice(key, ETF_SWITCH, p), oldAtSwitch[p]);
+    const next = sharedPrice(key, ETF_SWITCH + 1, p);
+    assert.ok(Math.abs(next / oldAtSwitch[p] - 1) < 0.001, `${p} 切換時不應跳空`);
+    const at = t => sharedPrice(key, t, p);
+    let worst = 0;
+    for (let t = ETF_SWITCH + 1; t < ETF_SWITCH + 2400; t++)
+      worst = Math.max(worst, Math.abs(Math.log(at(t) / at(t - 1))));
+    assert.ok(worst < 0.002, `${p} 平常單根價格不應大幅跳空：${worst}`);
+    const daily = [];
+    for (let d = 0; d <= 365; d++) daily.push(Math.log(at(ETF_SWITCH + d * DAY)));
+    const diffs = daily.slice(1).map((x, i) => x - daily[i]);
+    const mean = diffs.reduce((a,b) => a+b, 0) / diffs.length;
+    const annualVol = Math.sqrt(diffs.reduce((a,b) => a+(b-mean)**2,0) / diffs.length) * Math.sqrt(365);
+    assert.ok(annualVol < 0.40, `${p} 年化波動不能像幣圈：${annualVol}`);
+  }
+  assert.ok(ETF_SWITCH * 1500 > Date.UTC(2026, 9, 16, 2, 0), '切換點須晚於改版上線時間');
+  assert.ok(EVENT_START > ETF_SWITCH);
 });
 
 test('登入帳戶可交易 ETF：開倉、推進、平倉', () => {
