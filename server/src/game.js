@@ -198,7 +198,7 @@ function accountPrices(g, secret, extra = []) {
   if (shared(g)) { secretRequired(secret); return tickPrices(secret, g.cursor, [...new Set([...heldPairs(g.account), ...extra])]); }
   return { ...g.market.prices };
 }
-export function openOrder(g, { pair, side, leverage, margin }, now, marketSecret) {
+export function openOrder(g, { pair, side, leverage, margin, max = false }, now, marketSecret) {
   requireCaughtUp(g, now);
   if (!shared(g) && marketSecret !== undefined) throw new GameError('舊市場停止開倉；請先平掉舊持倉以切換全球市場');
   if (typeof pair !== 'string' || !Object.prototype.hasOwnProperty.call(PAIRS, pair)) throw new GameError('不支援的商品');
@@ -211,6 +211,12 @@ export function openOrder(g, { pair, side, leverage, margin }, now, marketSecret
   if (g.account.positions.length >= MAX_POSITIONS) throw new GameError(`最多同時持有 ${MAX_POSITIONS} 筆`);
   margin = Math.floor(margin * 100) / 100;
   const prices = accountPrices(g, marketSecret, [pair]);
+  // MAX 用即時伺服器估值計算；送單與前端按 MAX 間可能已過數根行情，
+  // 不能拿舊顯示值直接當保證金，尤其是高槓桿、大額持倉。
+  if (max === true) {
+    margin = E.maxAffordableMargin(E.freeMargin(g.account, prices), leverage);
+    if (margin < 10) throw new GameError('可用保證金不足');
+  }
   // Preserve the exact order time: expiry occurs on the first historical tick
   // at/after openedAt + seven days, never up to 1499 ms early.
   const r = E.openPosition(g.account, prices, { pair, side, leverage, notional: margin * leverage, time: now });

@@ -1,13 +1,13 @@
-import { initExtras } from "./extras.mjs?v=20261016d";
-import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261016d";
-import * as E from "./engine.mjs?v=20261016d";
-import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261016d";
-import * as Store from "./store.mjs?v=20261016d";
-import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261016d";
-import * as Cloud from "./cloud.mjs?v=20261016d";
-import { createRemoteMarket } from "./remote.mjs?v=20261016d";
-import { createAchievementBook } from "./achievements.mjs?v=20261016d";
-import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261016d";
+import { initExtras } from "./extras.mjs?v=20261016e";
+import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261016e";
+import * as E from "./engine.mjs?v=20261016e";
+import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261016e";
+import * as Store from "./store.mjs?v=20261016e";
+import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261016e";
+import * as Cloud from "./cloud.mjs?v=20261016e";
+import { createRemoteMarket } from "./remote.mjs?v=20261016e";
+import { createAchievementBook } from "./achievements.mjs?v=20261016e";
+import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261016e";
 
 const THEME_KEY = "fxweb.theme";
 // 兩種模式：
@@ -266,9 +266,8 @@ function renderOrder(prices, m) {
 }
 
 function maxMargin(prices) {
-  const lev = ui.leverage, free = E.freeMargin(state, prices);
-  const perMargin = 1 + lev * (0.00005 + lev * 0.000005); // 保證金 + 手續費 占用
-  return Math.max(0, Math.floor(free / perMargin * 100) / 100);
+  const valuation = mode === "server" && settledPrices ? settledPrices : prices;
+  return E.maxAffordableMargin(E.freeMargin(state, valuation), ui.leverage);
 }
 
 async function order(side) {
@@ -277,16 +276,25 @@ async function order(side) {
   ui.margin = margin;
   const pair = ui.pair, candles = market.candles(pair).slice();
   if (mode === "server") {
-    const r = await serverCall(() => Cloud.game.open({ pair, side, leverage: ui.leverage, margin }, market.step()));
+    // MAX 由伺服器按送單當刻的帳戶價格重新計算；顯示在輸入框的數字可能已因行情更新而過時。
+    const max = $("marginInput").dataset.maxOrder === "1";
+    const r = await serverCall(() => Cloud.game.open({ pair, side, leverage: ui.leverage, margin, ...(max ? { max: true } : {}) }, market.step()));
     const pos = r && r.result && r.result.opened;
     if (pos) {
+      if (max) { ui.margin = pos.margin; $("marginInput").value = pos.margin; }
+      delete $("marginInput").dataset.maxOrder;
       toast(`已${side > 0 ? "做多" : "做空"} ${pair}・進場 ${pos.entry.toFixed(digits(pair))}・手續費 ${money(pos.feePaid)}`);
       book.checkOpen({ side, entry: pos.entry, candles });
     }
     return;
   }
-  const r = E.openPosition(state, market.prices(), { pair, side, leverage: ui.leverage, notional: margin * ui.leverage, time: Date.now() });
+  const guestPrices = market.prices();
+  const guestMargin = $("marginInput").dataset.maxOrder === "1" ? maxMargin(guestPrices) : margin;
+  delete $("marginInput").dataset.maxOrder;
+  if (!(guestMargin >= 10)) { toast("可用保證金不足", true); return; }
+  const r = E.openPosition(state, guestPrices, { pair, side, leverage: ui.leverage, notional: guestMargin * ui.leverage, time: Date.now() });
   if (!r.ok) { toast(r.error, true); return; }
+  if (guestMargin !== margin) { ui.margin = guestMargin; $("marginInput").value = guestMargin; }
   toast(`已${side > 0 ? "做多" : "做空"} ${pair}・名目 ${money(r.position.notional)}・手續費 ${money(r.position.feePaid)}`);
   book.checkOpen({ side, entry: r.position.entry, candles });
   afterChange();
@@ -846,9 +854,9 @@ function renderModeBadge() {
 function bind() {
   $("longBtn").onclick = () => order(1);
   $("shortBtn").onclick = () => order(-1);
-  $("marginInput").oninput = e => { const v = Number(e.target.value); if (v > 0) { ui.margin = v; renderOrder(market.prices(), E.metrics(state, market.prices())); } };
-  $("leverageRange").oninput = e => { ui.leverage = E.LEVERAGES[Number(e.target.value)]; renderOrder(market.prices(), E.metrics(state, market.prices())); };
-  $("maxBtn").onclick = () => { const v = maxMargin(market.prices()); ui.margin = v; $("marginInput").value = v; renderOrder(market.prices(), E.metrics(state, market.prices())); };
+  $("marginInput").oninput = e => { delete e.target.dataset.maxOrder; const v = Number(e.target.value); if (v > 0) { ui.margin = v; renderOrder(market.prices(), E.metrics(state, market.prices())); } };
+  $("leverageRange").oninput = e => { ui.leverage = E.LEVERAGES[Number(e.target.value)]; if ($("marginInput").dataset.maxOrder === "1") { const v = maxMargin(market.prices()); ui.margin = v; $("marginInput").value = v; } renderOrder(market.prices(), E.metrics(state, market.prices())); };
+  $("maxBtn").onclick = () => { const v = maxMargin(market.prices()); ui.margin = v; $("marginInput").value = v; $("marginInput").dataset.maxOrder = "1"; renderOrder(market.prices(), E.metrics(state, market.prices())); };
   $("positions").onclick = e => {
     const h = e.target.closest("[data-help]");
     if (h) { openRisk(Number(h.dataset.help), false); return; }

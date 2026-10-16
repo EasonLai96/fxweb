@@ -116,6 +116,28 @@ test('舊訪客存檔保留 ETF 舊行情節奏，新建存檔改採較穩定波
   assert.ok(changed, '新建 ETF 行情應更穩定');
 });
 
+test('大額 MAX：浮點進位後仍不會超過可用保證金', () => {
+  for (const free of [10, 10000, 1e9, 1e12, 1e14, 1e16, 1e18]) for (const lev of E.LEVERAGES) {
+    const margin = E.maxAffordableMargin(free, lev), notional = margin * lev;
+    assert.ok(notional / lev + E.feeFor(notional, lev) <= free, `${free} × ${lev}：餘額不足`);
+  }
+});
+
+test('登入帳戶 MAX：依送單當刻的真實可用額度重算，多空均可下單', () => {
+  const t0 = 1800000000000;
+  for (const side of [1, -1]) for (const lev of [1, 5, 100]) {
+    const g = newGame(t0, secret); g.account.cash = 1e14;
+    // 模擬前端按 MAX 後到送單的時間差：舊顯示值已經超過即時餘額。
+    const stale = 1e14;
+    const pos = openOrder(g, { pair: 'BTC', side, leverage: lev, margin: stale, max: true }, t0, secret);
+    assert.ok(pos.margin < stale);
+    assert.equal(g.account.positions.length, 1);
+    assert.ok(E.freeMargin(g.account, { BTC: pos.entry }) >= 0);
+  }
+  const g = newGame(t0, secret); g.account.cash = 9;
+  assert.throws(() => openOrder(g, { pair: 'BTC', side: 1, leverage: 100, margin: 11, max: true }, t0, secret), /可用保證金不足/);
+});
+
 test('資產超過 10 億時仍可下單（以前會誤報「保證金至少 $10」）', () => {
   const t0 = 1800000000000, g = newGame(t0, secret);
   g.account.cash = 5e9; g.account.startingCash = 10000;

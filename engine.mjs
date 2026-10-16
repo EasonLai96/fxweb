@@ -118,6 +118,21 @@ export function feeFor(notional, leverage) {
   return notional * (0.00005 + leverage * 0.000005);
 }
 
+// MAX 下單：保證金和手續費都會占用可用額度。大數字的浮點運算可能把
+// free / perMargin 四捨五入到「超過」實際餘額，需依開倉時完全相同的
+// 運算順序回頭驗算；預留少量浮點安全餘額，避免萬億以上金額進位。
+export function maxAffordableMargin(free, leverage) {
+  if (!Number.isFinite(free) || free <= 0 || !LEVERAGES.includes(leverage)) return 0;
+  const perMargin = 1 + leverage * (0.00005 + leverage * 0.000005);
+  let margin = Math.floor(free / perMargin * 100) / 100;
+  for (let i = 0; i < 8 && margin > 0; i++) {
+    const notional = margin * leverage;
+    if (Number.isFinite(notional) && notional / leverage + feeFor(notional, leverage) <= free) break;
+    margin = Math.max(0, Math.floor((margin - Math.max(0.01, margin * Number.EPSILON * 16)) * 100) / 100);
+  }
+  return margin;
+}
+
 export function isUsdBase(pair) {
   return pair.startsWith("USD/");
 }

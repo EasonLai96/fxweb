@@ -340,7 +340,7 @@ async function gameAction(req, env, fn) {
 }
 
 const gameOpen = (req, env) => gameAction(req, env, (g, b, t, secret) => {
-  const pos = openOrder(g, { pair: b.pair, side: b.side, leverage: b.leverage, margin: b.margin }, t, secret);
+  const pos = openOrder(g, { pair: b.pair, side: b.side, leverage: b.leverage, margin: b.margin, max: b.max === true }, t, secret);
   return { opened: pos };
 });
 const gameClose = (req, env) => gameAction(req, env, (g, b, t, secret) => ({ closed: b.id, pnl: closeOrder(g, b.id, t, secret) }));
