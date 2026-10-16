@@ -6,9 +6,29 @@ export const CHART_THEMES = {
 };
 const MA10 = "#f3d27a", MA30 = "#8ec5ff", ENTRY = "#8ec5ff", LIQ = "#f2a76b";
 
+// 畫布的 CSS 尺寸快取。每次重畫都呼叫 getBoundingClientRect() 會強制瀏覽器同步重排整頁；
+// 每 1.5 秒 16 張畫布 × 前面剛改過 DOM 文字 = 連續 16 次整頁重排，手機上會卡到掉幀。
+// 改成只在 ResizeObserver 回報尺寸改變時才更新，平常直接讀快取。
+const sizes = new WeakMap();
+const observer = typeof ResizeObserver === "function"
+  ? new ResizeObserver(entries => { for (const e of entries) sizes.set(e.target, { w: e.contentRect.width, h: e.contentRect.height }); })
+  : null;
+function measure(canvas) {
+  let s = sizes.get(canvas);
+  if (!s) {
+    // 第一次：量一次並開始觀察。之後尺寸改變由 observer 更新。
+    const rect = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : { width: canvas.clientWidth, height: canvas.clientHeight };
+    s = { w: rect.width || canvas.clientWidth, h: rect.height || canvas.clientHeight };
+    sizes.set(canvas, s);
+    observer?.observe(canvas);
+  } else if (!observer) {
+    s = { w: canvas.clientWidth, h: canvas.clientHeight };   // 沒有 ResizeObserver 的舊瀏覽器維持原行為
+  }
+  return s;
+}
+
 function setup(canvas) {
-  const rect = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : { width: canvas.clientWidth, height: canvas.clientHeight };
-  const w = rect.width || canvas.clientWidth, h = rect.height || canvas.clientHeight;
+  const { w, h } = measure(canvas);
   if (!w || !h) return null;
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
@@ -133,8 +153,14 @@ export function drawCandles(canvas, all, { theme = "day", digits = 4, lines = []
   ctx.fillText(last.c.toFixed(digits), right + 6, y + 3.5);
 }
 
+const sparkSig = new WeakMap();
 export function drawSpark(canvas, values, color) {
+  // 走勢小圖內容（最後 40 根收盤＋顏色＋尺寸）沒變就不重畫。
+  const sz = measure(canvas);
+  const sig = color + "|" + sz.w + "x" + sz.h + "|" + values.length + "|" + values[0] + "|" + values[values.length - 1] + "|" + values[values.length >> 1];
+  if (sparkSig.get(canvas) === sig) return;
   const s = setup(canvas); if (!s || values.length < 2) return;
+  sparkSig.set(canvas, sig);
   const { ctx, w, h } = s;
   const hi = Math.max(...values), lo = Math.min(...values), r = hi - lo || 1;
   const pts = values.map((v, i) => [i / (values.length - 1) * w, h - 3 - (v - lo) / r * (h - 6)]);

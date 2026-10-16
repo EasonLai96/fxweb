@@ -1,13 +1,13 @@
-import { initExtras } from "./extras.mjs?v=20261016l";
-import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261016l";
-import * as E from "./engine.mjs?v=20261016l";
-import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261016l";
-import * as Store from "./store.mjs?v=20261016l";
-import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261016l";
-import * as Cloud from "./cloud.mjs?v=20261016l";
-import { createRemoteMarket } from "./remote.mjs?v=20261016l";
-import { createAchievementBook } from "./achievements.mjs?v=20261016l";
-import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261016l";
+import { initExtras } from "./extras.mjs?v=20261016m";
+import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261016m";
+import * as E from "./engine.mjs?v=20261016m";
+import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261016m";
+import * as Store from "./store.mjs?v=20261016m";
+import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261016m";
+import * as Cloud from "./cloud.mjs?v=20261016m";
+import { createRemoteMarket } from "./remote.mjs?v=20261016m";
+import { createAchievementBook } from "./achievements.mjs?v=20261016m";
+import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261016m";
 
 const THEME_KEY = "fxweb.theme";
 // One random id per tab lifetime; never derive presence from username or IP.
@@ -119,7 +119,14 @@ const spaced = p => p.replace("/", " / ");
 // 價格旁的計價單位：ETF 標示 NT$ 或 US$，外匯維持原樣（報價本身就是匯率）。
 const ccyTag = p => ({ TWD: "NT$", USD: "US$" }[currencyOf(p)] || "");
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+// getComputedStyle 也會觸發樣式計算；顏色只隨主題改變，依主題快取。
+const cssCache = new Map();
+const cssVar = n => {
+  const k = (document.documentElement.dataset.theme || "day") + n;
+  let v = cssCache.get(k);
+  if (v === undefined) { v = getComputedStyle(document.documentElement).getPropertyValue(n).trim(); cssCache.set(k, v); }
+  return v;
+};
 const theme = () => document.documentElement.dataset.theme || "day";
 
 function change(p) {
@@ -402,15 +409,19 @@ async function doRepay() {
 }
 
 /* ---------- 持倉 ---------- */
+// 內容沒變就不寫 innerHTML：避免每 1.5 秒重建節點、觸發整頁重排，也不會打斷正在點的按鈕。
+function setHtml(el, html) { if (el.__html !== html) { el.innerHTML = html; el.__html = html; } }
+function setText(el, text) { if (el.textContent !== text) el.textContent = text; }
+
 function renderPositions(prices) {
   const root = $("positions");
-  $("positionCount").textContent = state.positions.length;
-  $("riskHint").textContent = state.positions.length ? `合計 ${money(E.usedMargin(state))} 保證金` : "暫無持倉";
+  setText($("positionCount"), String(state.positions.length));
+  setText($("riskHint"), state.positions.length ? `合計 ${money(E.usedMargin(state))} 保證金` : "暫無持倉");
   if (!state.positions.length) {
-    root.innerHTML = '<div class="empty-state"><div class="empty-icon">♡</div>還沒有持倉，選一個商品開始吧</div>';
+    setHtml(root, '<div class="empty-state"><div class="empty-icon">♡</div>還沒有持倉，選一個商品開始吧</div>');
     return;
   }
-  root.innerHTML = state.positions.map(pos => {
+  setHtml(root, state.positions.map(pos => {
     const price = prices[pos.pair], pnl = E.unrealizedPnl(pos, price), d = digits(pos.pair);
     const risk = E.lossPct(pos, price), riskW = Math.min(100, risk / E.LIQ_LOSS * 100);
     const riskColor = risk >= E.WARN_LOSS ? cssVar("--down") : risk >= 0.3 ? "#e9a35a" : cssVar("--accent");
@@ -424,7 +435,7 @@ function renderPositions(prices) {
         <div class="risk-bar" title="距離強平"><i style="width:${riskW}%;background:${riskColor}"></i></div></div>
       <div class="pos-actions"><button class="close-btn help-btn" type="button" data-help="${pos.id}" title="追加保證金或借款補倉">補倉</button><button class="close-btn" type="button" data-close="${pos.id}" data-pair="${pos.pair}">平倉</button></div>
     </div>`;
-  }).join("");
+  }).join(""));
 }
 
 /* ---------- 淨值、紀錄、新聞 ---------- */
@@ -437,10 +448,10 @@ function renderHistory() {
   $("history").classList.toggle("hidden", !ui.historyOpen);
   if (!ui.historyOpen) return;
   const closes = state.log.filter(l => l.type === "close").slice(-15).reverse();
-  $("history").innerHTML = closes.length ? closes.map(l => `
+  setHtml($("history"), closes.length ? closes.map(l => `
     <div class="history-row"><span>${l.reason === "liquidated" ? '<b class="liq-tag">強平</b>' : ""}#${l.id} ${l.pair} @ ${l.price.toFixed(digits(l.pair))}</span>
     <strong class="${signCls(l.pnl)}">${signedMoney(l.pnl)}</strong></div>`).join("")
-    : '<div class="empty-state">還沒有結算紀錄</div>';
+    : '<div class="empty-state">還沒有結算紀錄</div>');
 }
 
 const pctTxt = m => `${m > 0 ? "+" : ""}${(m * 100).toFixed(0)}%`;
