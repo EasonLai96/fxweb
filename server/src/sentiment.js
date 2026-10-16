@@ -29,14 +29,16 @@ export function sentimentAt(snapshots, tick, pair) {
   const long = c?.long || 0, short = c?.short || 0;
   return { long, short, upProbability: probability(long, short), snapshotBucket: c ? bucket - 1 : null };
 }
-// Bounded and returns to zero at bucket boundaries: no perpetual arbitrage or price gap.
-export function sentimentLog(snapshots, tick, pair) {
+// Draw one secret direction per bucket at its first tick. UpProbability is the
+// actual probability of this ADDITIONAL move, not a prediction of total returns.
+// The bump starts/ends at zero, avoiding a permanent drift or boundary jump.
+export function sentimentLog(snapshots, tick, pair, draw = 0.5) {
   if (tick < SENTIMENT_START) return 0;
   const { long, short, upProbability } = sentimentAt(snapshots, tick, pair);
   if (long + short < MIN_VOTERS) return 0;
   const amplitude = isCrypto(pair) ? 0.0008 : isEtf(pair) ? 0.0003 : 0.0002;
   const x = (tick % SENTIMENT_BUCKET) / SENTIMENT_BUCKET;
-  return amplitude * ((upProbability - 0.5) / 0.05) * Math.sin(Math.PI * x);
+  return amplitude * (draw < upProbability ? 1 : -1) * Math.sin(Math.PI * x);
 }
 export async function captureSentiment(env, time) {
   const bucket = Math.floor(time / (SENTIMENT_BUCKET * 1500));

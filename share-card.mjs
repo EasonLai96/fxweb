@@ -1,4 +1,4 @@
-import { equity } from './engine.mjs?v=20261016g';
+import { equity } from './engine.mjs?v=20261016h';
 
 // Standalone renderer: it never fetches data, synthesizes history, or encodes a QR code.
 // context.equityPoints must be an array of actual account-equity samples (USD), in time order.

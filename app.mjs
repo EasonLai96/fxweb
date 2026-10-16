@@ -1,13 +1,13 @@
-import { initExtras } from "./extras.mjs?v=20261016g";
-import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261016g";
-import * as E from "./engine.mjs?v=20261016g";
-import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261016g";
-import * as Store from "./store.mjs?v=20261016g";
-import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261016g";
-import * as Cloud from "./cloud.mjs?v=20261016g";
-import { createRemoteMarket } from "./remote.mjs?v=20261016g";
-import { createAchievementBook } from "./achievements.mjs?v=20261016g";
-import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261016g";
+import { initExtras } from "./extras.mjs?v=20261016h";
+import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261016h";
+import * as E from "./engine.mjs?v=20261016h";
+import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261016h";
+import * as Store from "./store.mjs?v=20261016h";
+import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261016h";
+import * as Cloud from "./cloud.mjs?v=20261016h";
+import { createRemoteMarket } from "./remote.mjs?v=20261016h";
+import { createAchievementBook } from "./achievements.mjs?v=20261016h";
+import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261016h";
 
 const THEME_KEY = "fxweb.theme";
 // 兩種模式：
@@ -233,7 +233,7 @@ function renderChart() {
   $("pairName").textContent = PAIR_NAMES[p] + (kindOf(p) !== "fx" ? `・${ccyTag(p)} 計價` : "");
   const crowd = sentiment?.[p], info = $("sentimentInfo");
   info.hidden = !crowd;
-  if (crowd) info.textContent = `玩家多 ${crowd.long} 人／空 ${crowd.short} 人・模型偏向上漲權重 ${(crowd.upProbability * 100).toFixed(1)}%（${crowd.snapshotBucket === null ? '快照尚未建立，維持中性' : '採前一格快照；至少 3 人才影響行情'}）`;
+  if (crowd) info.textContent = `玩家多 ${crowd.long} 人／空 ${crowd.short} 人・模型額外波動向上機率 ${(crowd.upProbability * 100).toFixed(1)}%（${crowd.snapshotBucket === null ? '快照尚未建立，維持中性' : '採前一格快照；至少 3 人才影響行情'}）`;
 
   $("currentPrice").textContent = last.c.toFixed(digits(p));
   $("currentPrice").className = signCls(last.c - last.o);

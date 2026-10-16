@@ -1,7 +1,7 @@
 // Fictional shared tape. The 256-bit secret must come ONLY from Worker env.
 // No secret, HMAC digest or future news result belongs in D1, API or logs.
 import { hmacKey, PAIRS, INSTRUMENTS, isEtf, NEWS_SETTLE, FX_KEYS, ETF_KEYS, CRYPTO_KEYS, volOf, pickEvent, eventShape, EVENT_SPAN } from '../../market.mjs';
-import { sentimentLog } from './sentiment.js';
+import { SENTIMENT_START, SENTIMENT_BUCKET, sentimentLog } from './sentiment.js';
 export const TICK_MS = 1500;
 export const SHARED_MARKET_ALGORITHM = 'fxweb/shared/hmac-sha256-causal-v1';
 // PAIR_KEYS 包含 ETF（價格、K 線都會算）。新聞則分兩條獨立的 HMAC 串流：
@@ -80,11 +80,16 @@ function context(secret, sentiment) {
   // 讀 4 個位元組為大端序 uint32（與原本的 DataView.getUint32 相同），再換成 [0,1)。
   function u(b,at=0) { return (b[at]*16777216 + b[at+1]*65536 + b[at+2]*256 + b[at+3])/4294967296; }
   function anchor(t,p) { return t<0 ? 0 : (u(digest('anchor',t,p))*2-1)*0.012; }
+  function crowdLog(t,p) {
+    if (t < SENTIMENT_START || !sentiment?.get(Math.floor(t / SENTIMENT_BUCKET)-1)?.[p]) return 0;
+    const start = Math.floor(t / SENTIMENT_BUCKET) * SENTIMENT_BUCKET;
+    return sentimentLog(sentiment,t,p,u(digest('sentiment-direction',start,p)));
+  }
   function price(t,p) {
     checkTick(t); checkPair(p);
     const id=`${t}|${p}`;
     if (quotes.has(id)) return quotes.get(id);
-    if (isEtf(p) && t>ETF_SWITCH) { let v=etfPrice(t,p); const tilt=sentimentLog(sentiment,t,p); if (tilt) v*=Math.exp(tilt); quotes.set(id,v); return v; }
+    if (isEtf(p) && t>ETF_SWITCH) { let v=etfPrice(t,p); const tilt=crowdLog(t,p); if (tilt) v*=Math.exp(tilt); quotes.set(id,v); return v; }
     const start=Math.floor(t/SPAN)*SPAN, x=(t-start)/SPAN, smooth=x*x*(3-2*x);
     // The current anchor first becomes available at 'start'; never read the NEXT anchor.
     const trend=anchor(start-SPAN,p)*(1-smooth)+anchor(start,p)*smooth;
@@ -96,7 +101,7 @@ function context(secret, sentiment) {
     const shock=t>=EVENT_START ? shockLog(t,p) : 0;
     const whale=t>=WHALE_START ? whaleLog(t,p) : 0;
     if (shock || whale) result*=Math.exp(shock+whale);
-    const tilt=sentimentLog(sentiment,t,p); if (tilt) result*=Math.exp(tilt);
+    const tilt=crowdLog(t,p); if (tilt) result*=Math.exp(tilt);
     quotes.set(id,result); return result;
   }
   // ===== ETF：比照真實市場（照真實日曆）=====
