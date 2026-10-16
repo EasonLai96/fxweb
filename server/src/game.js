@@ -14,6 +14,8 @@ export const MAX_POSITIONS = 20;
 export const MAX_HOLD_MS = 7 * 24 * 60 * 60 * 1000;
 const LOG_KEEP = 200;
 const pairs = Object.keys(PAIRS);
+// 某份私有（舊）行情實際有的商品。舊行情建立於加入 ETF 之前，只有外匯。
+const marketPairs = m => pairs.filter(p => Object.prototype.hasOwnProperty.call(m.prices, p));
 
 function newSecret() {
   const bytes = globalThis.crypto.getRandomValues(new Uint8Array(32));
@@ -68,8 +70,10 @@ export function ensureSecureGame(g) {
   }
   const fresh = createMarketState(undefined, { secret: newSecret(), warmup: 0 });
   secureMarketState(g.market, fresh.secret);
-  g.market.phase = fresh.phase;
-  for (const p of pairs) g.market.bias[p] = { v: 0, left: 0 };
+  // 只重設這份舊行情原本就有的商品（舊行情沒有 ETF），不要替它憑空加入新商品。
+  const own = marketPairs(g.market);
+  g.market.phase = Object.fromEntries(own.map(p => [p, fresh.phase[p]]));
+  for (const p of own) g.market.bias[p] = { v: 0, left: 0 };
   g.market.news = [];
   return true;
 }
@@ -190,7 +194,7 @@ function accountPrices(g, secret) {
 export function openOrder(g, { pair, side, leverage, margin }, now, marketSecret) {
   requireCaughtUp(g, now);
   if (!shared(g) && marketSecret !== undefined) throw new GameError('舊市場停止開倉；請先平掉舊持倉以切換全球市場');
-  if (!Object.prototype.hasOwnProperty.call(PAIRS, pair)) throw new GameError('不支援的貨幣對');
+  if (typeof pair !== 'string' || !Object.prototype.hasOwnProperty.call(PAIRS, pair)) throw new GameError('不支援的商品');
   if (side !== 1 && side !== -1) throw new GameError('方向錯誤');
   if (!Number.isInteger(leverage)) throw new GameError('槓桿必須是整數');
   if (typeof margin !== 'number' || !Number.isFinite(margin) || margin < 10 || margin > 1e9) throw new GameError('保證金至少 $10');
@@ -272,7 +276,8 @@ export function view(g, since, events = [], now = Date.now(), marketSecret) {
   const m = isShared ? makeSharedMarket(marketSecret, absoluteTick(now), { since }) : g.market;
   const step = m.step, full = !(Number.isSafeInteger(since) && since >= 0 && since <= step && step - since < m.history);
   const candles = {};
-  for (const p of pairs) candles[p] = isShared || full ? m.candles[p] : m.candles[p].filter(c => c.t > since);
+  // 舊私有行情沒有 ETF：只回傳它實際有的商品，避免對 undefined 呼叫 filter 而整個 API 500。
+  for (const p of isShared ? pairs : marketPairs(m)) candles[p] = isShared || full ? m.candles[p] : m.candles[p].filter(c => c.t > since);
   const a = g.account, pending = remaining(g, now);
   const settledStep = cursor(g);
   const settledPrices = isShared ? (settledStep === step ? m.prices : tickPrices(marketSecret, settledStep)) : m.prices;

@@ -1,13 +1,13 @@
-import { initExtras } from "./extras.mjs?v=20261016b";
-import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261016b";
-import * as E from "./engine.mjs?v=20261016b";
-import { createMarket, PAIR_NAMES, NEWS_SETTLE } from "./market.mjs?v=20261016b";
-import * as Store from "./store.mjs?v=20261016b";
-import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261016b";
-import * as Cloud from "./cloud.mjs?v=20261016b";
-import { createRemoteMarket } from "./remote.mjs?v=20261016b";
-import { createAchievementBook } from "./achievements.mjs?v=20261016b";
-import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261016b";
+import { initExtras } from "./extras.mjs?v=20261016c";
+import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261016c";
+import * as E from "./engine.mjs?v=20261016c";
+import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, priceDigits, currencyOf } from "./market.mjs?v=20261016c";
+import * as Store from "./store.mjs?v=20261016c";
+import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261016c";
+import * as Cloud from "./cloud.mjs?v=20261016c";
+import { createRemoteMarket } from "./remote.mjs?v=20261016c";
+import { createAchievementBook } from "./achievements.mjs?v=20261016c";
+import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261016c";
 
 const THEME_KEY = "fxweb.theme";
 // 兩種模式：
@@ -33,6 +33,8 @@ const achOwner = () => (Cloud.user() ? "user:" + Cloud.user() : "guest");
 const book = createAchievementBook({ onUnlock: def => showAchievement(def) });
 
 function resetModeFlags() {
+  // 不同模式的商品清單不同（戰役只有外匯），切換時要重建左側清單。
+  const list = document.getElementById("pairList"); if (list) delete list.dataset.built;
   modeEpoch++; busy = false; catchingUp = false; lastOk = 0;
   progress = null; resets = 0; settledPrices = null; accountSettledAt = null; remainingTicks = 0; serverMarketMode = "shared"; switchStatus = "ready"; lastMarketMode = null;
   battleAuto = false; lastLossTrack = 0; warned.clear(); closeRisk();
@@ -86,7 +88,7 @@ const equityPts = [];       // 淨值曲線：guest 每 tick 一點；server 用
 let newsTimer = 0, toastTimer = 0, lastNewsStep = -1;
 
 const $ = id => document.getElementById(id);
-const digits = p => (p.includes("JPY") ? 3 : 4);
+const digits = priceDigits;
 // 金額 ≥ 1 億改用中文大數單位簡寫，避免天文數字撐爆版面。
 const BIG_UNITS = [[1e16, "京"], [1e12, "兆"], [1e8, "億"]];
 function absMoney(v) {
@@ -101,6 +103,8 @@ const signedMoney = v => (v >= 0 ? "+" : "-") + "$" + absMoney(v);
 const pct = v => Math.abs(v) >= 1e4 ? `${v >= 0 ? "+" : "-"}${absMoney(Math.abs(v * 100)).replace(/\.00$/, "")}%` : `${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`;
 const signCls = v => (v > 0 ? "positive" : v < 0 ? "negative" : "");
 const spaced = p => p.replace("/", " / ");
+// 價格旁的計價單位：ETF 標示 NT$ 或 US$，外匯維持原樣（報價本身就是匯率）。
+const ccyTag = p => ({ TWD: "NT$", USD: "US$" }[currencyOf(p)] || "");
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const theme = () => document.documentElement.dataset.theme || "day";
@@ -117,17 +121,24 @@ function toast(msg, bad = false) {
   clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.className = "toast" + (bad ? " bad" : ""); }, 2600);
 }
 
-/* ---------- 左欄：貨幣對 ---------- */
+/* ---------- 左欄：商品（外匯＋股票 ETF） ---------- */
 function renderPairs() {
   const list = $("pairList");
-  if (!list.dataset.built) {
-    list.innerHTML = market.pairs().map(p => `
-      <button type="button" class="pair-row" role="option" data-pair="${p}">
+  // 伺服器剛連上、還沒收到某商品的資料時先不畫，下一輪再建清單。
+  const ready = market.pairs().filter(p => market.get(p) != null && market.candles(p)?.length);
+  if (!ready.includes(ui.pair) && ready.length) ui.pair = ready[0];
+  if (!list.dataset.built || list.dataset.built !== ready.join(",")) {
+    const row = p => `
+      <button type="button" class="pair-row${isEtf(p) ? " etf" : ""}" role="option" data-pair="${p}">
         <span><strong>${p}</strong><small>${PAIR_NAMES[p]}</small></span>
         <span class="pair-numbers"><strong data-f="price"></strong><small data-f="chg"></small></span>
         <canvas data-spark="${p}" aria-hidden="true"></canvas>
-      </button>`).join("");
-    list.dataset.built = "1";
+      </button>`;
+    const fx = ready.filter(p => !isEtf(p)), etf = ready.filter(isEtf);
+    list.innerHTML = etf.length
+      ? `<div class="pair-group-label" role="presentation">外匯</div>${fx.map(row).join("")}<div class="pair-group-label" role="presentation">股票 ETF</div>${etf.map(row).join("")}`
+      : fx.map(row).join("");
+    list.dataset.built = ready.join(",");
     list.onclick = e => { const b = e.target.closest("[data-pair]"); if (b) selectPair(b.dataset.pair); };
   }
   const up = cssVar("--up"), down = cssVar("--down");
@@ -217,7 +228,7 @@ function updateBankPreview() {
 function renderChart() {
   const p = ui.pair, cs = market.candles(p), last = cs[cs.length - 1], ch = change(p);
   $("pairTitle").textContent = spaced(p);
-  $("pairName").textContent = PAIR_NAMES[p];
+  $("pairName").textContent = PAIR_NAMES[p] + (isEtf(p) ? `・${ccyTag(p)} 計價` : "");
   $("currentPrice").textContent = last.c.toFixed(digits(p));
   $("currentPrice").className = signCls(last.c - last.o);
   $("priceChange").textContent = pct(ch); $("priceChange").className = signCls(ch);
@@ -236,7 +247,8 @@ function renderChart() {
 function renderOrder(prices, m) {
   const p = ui.pair, price = prices[p], lev = ui.leverage, margin = ui.margin;
   const notional = margin * lev;
-  $("orderPair").textContent = spaced(p);
+  $("orderPair").textContent = isEtf(p) ? `${p} ${PAIR_NAMES[p]}` : spaced(p);
+  $("orderPairLabel").textContent = isEtf(p) ? "交易商品" : "交易貨幣對";
   $("leverageValue").textContent = lev + "×";
   const levIndex = E.LEVERAGES.indexOf(lev);
   $("leverageRange").value = levIndex;
@@ -362,7 +374,7 @@ function renderPositions(prices) {
   $("positionCount").textContent = state.positions.length;
   $("riskHint").textContent = state.positions.length ? `合計 ${money(E.usedMargin(state))} 保證金` : "暫無持倉";
   if (!state.positions.length) {
-    root.innerHTML = '<div class="empty-state"><div class="empty-icon">♡</div>還沒有持倉，選一個貨幣對開始吧</div>';
+    root.innerHTML = '<div class="empty-state"><div class="empty-icon">♡</div>還沒有持倉，選一個商品開始吧</div>';
     return;
   }
   root.innerHTML = state.positions.map(pos => {
@@ -408,7 +420,7 @@ function showNews(n) {
   $("nfTag").textContent = `${n.pair}・${bull ? "利多" : "利空"}`;
   $("nfTag").className = "nf-tag" + (bull ? "" : " bear");
   $("nfTitle").textContent = n.text;
-  $("nfBody").textContent = `新聞通常推動 ${n.pair} ${bull ? "上漲" : "下跌"}，但約四分之一的情況市場會反向。點左側貨幣對可查看走勢。`;
+  $("nfBody").textContent = `新聞通常推動 ${n.pair} ${bull ? "上漲" : "下跌"}，但約四分之一的情況市場會反向。點左側商品可查看走勢。`;
   $("newsFloat").classList.add("show");
   clearTimeout(newsTimer); newsTimer = setTimeout(() => $("newsFloat").classList.remove("show"), 5200);
 }

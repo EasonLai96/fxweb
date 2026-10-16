@@ -1,11 +1,11 @@
-import { feeFor, LEVERAGES } from './engine.mjs?v=20261016b';
-import { getAvatar, saveAvatar, removeAvatar, avatarImage, DEFAULT_AVATAR_URL } from './avatar.mjs?v=20261016b';
+import { feeFor, LEVERAGES } from './engine.mjs?v=20261016c';
+import { getAvatar, saveAvatar, removeAvatar, avatarImage, DEFAULT_AVATAR_URL } from './avatar.mjs?v=20261016c';
 
 function defaultAvatarImg() {
   const img = document.createElement('img'); img.alt = '預設分享頭像'; img.src = DEFAULT_AVATAR_URL; return img;
 }
-import { drawShareCard } from './share-card.mjs?v=20261016b';
-import makeQR from './qr-code.mjs?v=20261016b';
+import { drawShareCard } from './share-card.mjs?v=20261016c';
+import makeQR from './qr-code.mjs?v=20261016c';
 
 const qr = makeQR(0, 'M');
 qr.addData('https://easonlai96.github.io/fxweb/');
@@ -140,7 +140,7 @@ export function initExtras({ getContext, refresh, onToast = () => {} }) {
       card.append(el('span', 'ach-medal', ts ? '🏅' : '❔'), el('span', 'ach-name', ts ? def.name : '？？？'), el('span', 'ach-desc', ts ? def.desc : def.hint));
       if (ts) card.append(el('span', 'ach-date', ts.slice(0, 10)));
       else if (def.follow) {
-        const b = el('button', 'ach-follow-btn', '去 bilibili 關注'); b.type = 'button';
+        const b = el('button', 'ach-follow-btn', '去脆關注'); b.type = 'button';
         b.addEventListener('click', () => { window.open(book.followUrl, '_blank', 'noopener'); book.unlock(def.id); renderAchievements(); });
         card.append(b);
       }

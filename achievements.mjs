@@ -2,7 +2,7 @@
 // 判定在瀏覽器進行（訪客、登入、經典戰役共用），解鎖紀錄存在這台裝置，依身分分開保存。
 // 這是好玩的紀念冊，不是伺服器認證的成績；伺服器的練習里程碑另外計算。
 
-export const FOLLOW_URL = "https://space.bilibili.com/443211651";
+export const FOLLOW_URL = "https://www.threads.com/@grim_reaper19222";
 export const NEVER_SELL_MS = 3 * 60 * 1000;   // 即時行情：單筆持續浮虧 3 分鐘
 export const NEVER_SELL_DAYS = 15;            // 經典戰役：單筆持續浮虧 15 個交易日
 export const BUY_TOP_WINDOW = 40;             // 近 40 根 K 線
@@ -20,7 +20,7 @@ export const ACHIEVEMENTS = [
   { id: "sure-win", name: "我有必勝法", desc: "淨資產比初始資金多出 $1,000,000。", hint: "收益達到一百萬" },
   { id: "honest-work", name: "老實賺錢，很枯燥吧", desc: "完成第一次獲利平倉。", hint: "獲利平倉一次" },
   { id: "rooftop", name: "天台見", desc: "淨資產比初始資金少了 $100,000。", hint: "淨資產比 $10,000 低十萬" },
-  { id: "thanks-meow", name: "感謝支持喵", desc: "去 bilibili 關注原作 UP 主「-會飛的蟈蟈-」。", hint: "點「去關注」打開 UP 主主頁", follow: true },
+  { id: "thanks-meow", name: "感謝支持喵", desc: "去 Threads（脆）關注作者 @grim_reaper19222。", hint: "點「去脆關注」打開作者的 Threads 主頁", follow: true },
 ];
 
 const KEY = "fxweb.achievements.v1";

@@ -94,6 +94,10 @@ button:disabled{opacity:.45;cursor:not-allowed}
 .pair-numbers strong{font:700 13px "DM Mono",monospace}
 .pair-numbers small{font:700 11px "DM Mono",monospace}
 .pair-row canvas{grid-column:1/-1;width:100%;height:26px;display:block;margin-top:4px}
+/* 商品分組標題（外匯／股票 ETF） */
+.pair-group-label{font-size:11px;font-weight:900;letter-spacing:.08em;color:var(--text-muted);padding:10px 12px 2px}
+.pair-group-label:first-child{padding-top:0}
+.pair-row.etf > span:first-child > strong::after{content:"ETF";margin-left:6px;padding:1px 5px;border-radius:5px;font:800 9px/1.4 "DM Mono",monospace;vertical-align:2px;background:var(--tint-green);color:var(--accent-hover)}
 .market-note{display:flex;gap:8px;align-items:flex-start;margin:16px 10px 0;padding-top:16px;border-top:1px dashed var(--border-strong);font-size:12px;color:var(--text-muted);font-weight:700;line-height:1.5}
 .market-note span:first-child{color:var(--accent)}
 
@@ -302,6 +306,9 @@ html[data-theme="night"] .primary-button{background:var(--accent);color:#0b2a1e}
   .pair-row{flex:0 0 31%;min-width:108px;scroll-snap-align:start;display:block;padding:7px 8px;border:1px solid var(--border-soft);border-radius:11px}
   .pair-row.selected{box-shadow:none;border-color:var(--accent-hover)}
   .pair-row strong{font-size:12px}.pair-row small{display:none}
+  /* 手機版橫向捲動：分組標題變成直立的小標籤 */
+  .pair-group-label{flex:0 0 auto;align-self:stretch;display:flex;align-items:center;writing-mode:vertical-rl;padding:4px 2px;font-size:10px;letter-spacing:.15em}
+  .pair-group-label:first-child{padding-top:4px}
   .pair-numbers{text-align:left;margin-top:3px;display:flex;justify-content:space-between;gap:4px}
   .pair-numbers strong{font-size:11px}.pair-numbers small{display:inline!important;font-size:10px;margin:0}
   .pair-row canvas{height:22px;margin-top:3px}

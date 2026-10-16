@@ -57,7 +57,7 @@ test('cumulative stats survive log truncation and persistence; every achievement
   }
   assert.equal(g.account.log.length,200);
   assert.equal(g.progress.stats.closedTrades,125); assert.equal(g.progress.lifetimeStats.openedTrades,125);
-  assert.equal(g.progress.stats.pairsTraded.length,6);
+  assert.equal(g.progress.stats.pairsTraded.length,pairs.length);
   assert.ok(view(g,-1,[],t).progress.achievements.every(a=>a.unlockedAt===t && a.progress===a.target));
   const p=clone(g.progress); advance(g,t); view(g,-1,[],t); assert.deepEqual(g.progress,p);
 });

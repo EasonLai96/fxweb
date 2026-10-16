@@ -102,13 +102,14 @@ test("登入後可重新產生救援碼（需要密碼）", async () => {
 });
 
 /* ---------- 遊戲：伺服器端計算 ---------- */
-test("新遊戲：$10,000、6 個貨幣對、K 線、不洩漏亂數與新聞方向", async () => {
+test("新遊戲：$10,000、6 個外匯＋4 檔 ETF、K 線、不洩漏亂數與新聞方向", async () => {
   const { call, reg } = setup();
   const { token } = await reg("ivy");
   const g = await call("GET", "/api/game", { token });
   assert.equal(g.status, 200);
   assert.equal(g.body.account.cash, 10000);
-  assert.equal(Object.keys(g.body.prices).length, 6);
+  assert.equal(Object.keys(g.body.prices).length, 10);
+  assert.ok(g.body.candles["SPY"].length > 50 && g.body.prices["0050"] > 0);
   assert.ok(g.body.candles["EUR/USD"].length > 50);
   const text = JSON.stringify(g.body);
   assert.ok(!/"r":/.test(text) && !/"phase"/.test(text) && !/"bias"/.test(text), "不送出亂數狀態與新聞偏移");

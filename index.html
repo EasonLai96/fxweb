@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" href="assets/apple-touch-icon.png?v=2">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Nunito:wght@600;700;800;900&display=swap">
-<link rel="stylesheet" href="styles.css?v=20261016b">
+<link rel="stylesheet" href="styles.css?v=20261016c">
 </head>
 <body>
 <div class="app-shell">
@@ -61,8 +61,8 @@
 
     <div class="workspace">
       <aside class="panel market-panel">
-        <div class="panel-heading"><div><span class="section-kicker">MARKET WATCH</span><h2>貨幣對</h2></div><span class="heading-glyph" aria-hidden="true">✳</span></div>
-        <div id="pairList" class="pair-list" role="listbox" aria-label="選擇貨幣對"></div>
+        <div class="panel-heading"><div><span class="section-kicker">MARKET WATCH</span><h2>商品</h2></div><span class="heading-glyph" aria-hidden="true">✳</span></div>
+        <div id="pairList" class="pair-list" role="listbox" aria-label="選擇交易商品"></div>
         <div class="market-note"><span aria-hidden="true">✦</span><span>價格上升時做多獲利，下降時做空獲利。</span></div>
       </aside>
 
@@ -115,7 +115,7 @@
       <aside class="right-column">
         <section class="panel order-panel">
           <div class="panel-heading"><div><span class="section-kicker">NEW ORDER</span><h2>開一筆交易</h2></div><span class="order-decoration" aria-hidden="true">✿</span></div>
-          <div class="order-pair"><span>交易貨幣對</span><strong id="orderPair">EUR / USD</strong></div>
+          <div class="order-pair"><span id="orderPairLabel">交易貨幣對</span><strong id="orderPair">EUR / USD</strong></div>
           <div class="compact-fields">
             <div>
               <label class="field-label" for="marginInput">投入保證金 <span>USD</span></label>
@@ -285,6 +285,6 @@
   </div>
 </div>
 
-<script type="module" src="app.mjs?v=20261016b"></script>
+<script type="module" src="app.mjs?v=20261016c"></script>
 </body>
 </html>

@@ -1,8 +1,8 @@
 // 經典戰役：用真實歷史日收盤價（ECB 參考匯率，經 Frankfurter 取得後內建在 battle-data.mjs）回放。
 // 介面和 market.mjs 的 createMarket 相同，畫面程式不用分兩套；一根 K 線 = 一個交易日。
 // 只有日收盤價，沒有盤中高低點：K 線開盤 = 前一日收盤，高 / 低 = 開收的較大 / 較小值。
-import { BATTLE_DATA } from "./battle-data.mjs?v=20261016b";
-import { PAIRS } from "./market.mjs?v=20261016b";
+import { BATTLE_DATA } from "./battle-data.mjs?v=20261016c";
+import { PAIRS } from "./market.mjs?v=20261016c";
 
 export const BATTLES = [
   { id: "franc-2015", title: "瑞郎脫鉤黑天鵝", pair: "USD/CHF", event: "2015-01-15", start: "2014-12-01",
@@ -55,7 +55,8 @@ export function createBattleMarket(id, cursor) {
   if (!b || !d) throw new Error("找不到這場戰役");
   const last = d.dates.length - 1;
   let at = Math.max(0, Math.min(last, Number.isInteger(cursor) ? cursor : startIndex(id)));
-  const pairs = Object.keys(PAIRS);
+  // 戰役只有外匯的真實歷史資料；ETF 沒有對應期間的資料，所以戰役裡只列外匯。
+  const pairs = Object.keys(PAIRS).filter(p => Array.isArray(d.prices[p]));
   const candleCache = {};
   for (const p of pairs) {
     const s = d.prices[p];

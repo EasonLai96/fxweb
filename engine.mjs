@@ -46,7 +46,10 @@ export function netWorth(state, prices) {
 export function accrueLoan(state, ticks) {
   const l = state && state.loan;
   if (!l || !(ticks > 0)) return;
-  l.accrued = cents(l.accrued + l.principal * l.rateDaily / LOAN_DAY_TICKS * ticks);
+  // 不在這裡四捨五入：玩家正常遊玩時每次只推進 1 根，逐根捨入到分會讓
+  // 小額借款（< $1,000）的每根利息被捨成 0（永遠免息），其他金額則被多收或少收。
+  // 金額只在 loanOwed() 顯示／還款時才取到分。
+  l.accrued = l.accrued + l.principal * l.rateDaily / LOAN_DAY_TICKS * ticks;
 }
 
 export function borrow(state, amount, time) {

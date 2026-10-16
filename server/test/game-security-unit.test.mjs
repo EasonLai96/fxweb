@@ -36,7 +36,7 @@ test('server secrets are independent 256bit and HMAC output is used directly', (
   assert.equal(a.market.r,undefined); assert.notDeepEqual(a.market.prices,b.market.prices);
   const ms=createMarketState(undefined,{secret,warmup:0});
   const d=createHmac('sha256',Buffer.from(secret,'hex')).update('fxweb/market/hmac-sha256-v1|0|0').digest();
-  Object.keys(ms.phase).forEach((p,i)=>assert.equal(ms.phase[p],d.readUInt32BE(i*4)/4294967296*Math.PI*2));
+  Object.keys(ms.phase).slice(0,8).forEach((p,i)=>assert.equal(ms.phase[p],d.readUInt32BE(i*4)/4294967296*Math.PI*2));
   assert.notDeepEqual(ms.phase,createMarketState(undefined,{secret:secret.slice(0,-1)+'0',warmup:0}).phase);
   assert.throws(()=>createMarketState(1,{secret:'1234'}));
 });

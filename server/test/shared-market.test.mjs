@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
-import { PAIRS, NEWS_SETTLE, hmacSha256 } from '../../market.mjs';
+import { PAIRS, NEWS_SETTLE, hmacSha256, volOf, FX_KEYS } from '../../market.mjs';
 import { TICK_MS, SHARED_MARKET_ALGORITHM, absoluteTick, tickAt, sharedPrice, sharedCandle, sharedNews, makeSharedMarket } from '../src/shared-market.js';
 import { newGame, view } from '../src/game.js';
 const secret='6c'.repeat(32), other='e4'.repeat(32), pairs=Object.keys(PAIRS);
@@ -52,15 +52,16 @@ test('at and before anchor boundaries prices only use historical HMAC ticks',()=
     let jitter=0;
     for(let lag=0;lag<3;lag++) if(t>=lag) jitter += [0.5,0.32,0.18][lag]*(get('noise',t-lag)*2-1);
     assert.ok(seen.every(at=>at<=t),`future anchor at ${t}`);
-    assert.equal(sharedPrice(secret,t,p),PAIRS[p]*Math.exp(trend+jitter*0.0014));
+    assert.equal(sharedPrice(secret,t,p),PAIRS[p]*Math.exp(volOf(p)*(trend+jitter*0.0014)));
   }
 });
 test('news releases only at its tick; reversal is delayed until settlement',()=>{
   const head=500000,view=makeSharedMarket(secret,head,{history:600});
-  assert.ok(view.news.length>0&&view.news.length<=50);
+  const fxNews=view.news.filter(n=>FX_KEYS.includes(n.pair)), etfNews=view.news.filter(n=>!FX_KEYS.includes(n.pair));
+  assert.ok(fxNews.length>0&&fxNews.length<=50&&etfNews.length<=50);
   for(const n of view.news) {
     assert.ok(n.step<=head);
-    const atRelease=sharedNews(secret,n.step);
+    const atRelease=FX_KEYS.includes(n.pair) ? sharedNews(secret,n.step) : {reversed:null,settled:false};
     assert.ok(atRelease); assert.equal(atRelease.reversed,null); assert.equal(atRelease.settled,false);
     assert.equal(n.settled,head-n.step>=8);
     assert.equal(n.settled?typeof n.reversed:n.reversed,n.settled?'boolean':null);
@@ -77,7 +78,10 @@ test('incremental candles and merged news match a full view',()=>{
   }
   const merged=new Map(previous.news.map(n=>[n.step+'|'+n.pair,n]));
   for(const n of delta.news) merged.set(n.step+'|'+n.pair,n);
-  assert.deepEqual([...merged.values()].sort((a,b)=>a.step-b.step).slice(-50),full.news);
+  // 外匯、ETF 兩條新聞串流各自比對（ETF 只回顧 history+結算期）。
+  const all=[...merged.values()].sort((a,b)=>a.step-b.step), isFx=n=>FX_KEYS.includes(n.pair);
+  assert.deepEqual(all.filter(isFx).slice(-50),full.news.filter(isFx));
+  assert.deepEqual(all.filter(n=>!isFx(n)&&n.step>head-(160+NEWS_SETTLE)).slice(-50),full.news.filter(n=>!isFx(n)));
   assert.deepEqual(makeSharedMarket(secret,head,{since:-1}),full);
   assert.deepEqual(makeSharedMarket(secret,head,{since:head-160}),full);
   assert.deepEqual(makeSharedMarket(secret,head,{since:head+1}),full);
@@ -132,7 +136,7 @@ test('160x6 performance comparison for full, one tick and same tick',()=>{
 test('600x6 performance smoke',()=>{
   const start=performance.now(),view=makeSharedMarket(secret,1180000000,{history:600});
   const ms=performance.now()-start;
-  assert.equal(view.candles[pairs[0]].length*pairs.length,3600);
+  assert.equal(view.candles[pairs[0]].length*pairs.length,600*pairs.length);
   assert.ok(ms<10000,`600x6 generation took ${ms.toFixed(1)}ms`);
   console.log(`shared market 600x6: ${ms.toFixed(1)}ms`);
 });

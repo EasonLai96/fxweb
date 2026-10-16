@@ -11,6 +11,8 @@ export function makeRng(seed) {
   };
 }
 
+// ⚠️ 順序很重要：外匯必須排在前面。行情的隨機數是依這個順序逐檔消耗的，
+// 新商品一律加在最後，既有外匯的價格序列才不會被打亂。
 export const PAIRS = {
   "EUR/USD": 1.0874,
   "GBP/USD": 1.2712,
@@ -18,6 +20,11 @@ export const PAIRS = {
   "USD/CHF": 0.8846,
   "AUD/USD": 0.6631,
   "USD/CAD": 1.3684,
+  // 股票 ETF（2026-10-16 新增）。行情一樣是虛構模擬，只是起始價格與波動大小參考真實標的。
+  "0050": 52.80,     // 新台幣計價
+  "00878": 21.35,    // 新台幣計價
+  "SPY": 662.40,     // 美元計價
+  "QQQ": 598.70,     // 美元計價
 };
 
 export const PAIR_NAMES = {
@@ -27,7 +34,27 @@ export const PAIR_NAMES = {
   "USD/CHF": "美元 / 瑞郎",
   "AUD/USD": "澳元 / 美元",
   "USD/CAD": "美元 / 加元",
+  "0050": "元大台灣50",
+  "00878": "國泰永續高股息",
+  "SPY": "標普500 ETF",
+  "QQQ": "那斯達克100 ETF",
 };
+
+// 商品分類與計價。ETF 的損益 = 方向 ×（現價 / 進場價 − 1）× 名目（美元），
+// 和 XXX/USD 的公式完全相同，所以新台幣計價的 ETF 不需要換匯，帳戶仍以美元結算。
+// vol：相對外匯的波動倍數（外匯 = 1，數值完全不變）。
+export const INSTRUMENTS = {
+  "0050":  { kind: "etf", ccy: "TWD", vol: 1.8 },
+  "00878": { kind: "etf", ccy: "TWD", vol: 1.2 },
+  "SPY":   { kind: "etf", ccy: "USD", vol: 1.5 },
+  "QQQ":   { kind: "etf", ccy: "USD", vol: 2.2 },
+};
+export const isEtf = p => INSTRUMENTS[p]?.kind === "etf";
+export const volOf = p => INSTRUMENTS[p]?.vol ?? 1;
+export const FX_KEYS = Object.keys(PAIRS).filter(p => !isEtf(p));
+export const ETF_KEYS = Object.keys(PAIRS).filter(isEtf);
+export const priceDigits = p => (isEtf(p) ? 2 : p.includes("JPY") ? 3 : 4);
+export const currencyOf = p => (isEtf(p) ? INSTRUMENTS[p].ccy : null);
 
 const HEADLINES = {
   "EUR/USD": [["歐洲央行官員暗示將再升息", 1], ["歐元區製造業 PMI 意外疲軟", -1], ["德國通膨數據高於預期", 1], ["美國非農就業強勁，美元走高", -1]],
@@ -36,6 +63,10 @@ const HEADLINES = {
   "USD/JPY": [["日本央行維持超寬鬆政策", 1], ["日本財務省暗示進場干預", -1], ["美債殖利率攀升", 1], ["避險資金湧入日圓", -1]],
   "USD/CHF": [["聯準會官員發言偏鷹", 1], ["地緣政治緊張，資金湧入瑞郎", -1], ["美國零售銷售超出預期", 1], ["瑞士央行意外升息", -1]],
   "USD/CAD": [["國際油價大跌，加元承壓", 1], ["加拿大就業數據亮眼", -1], ["美國 CPI 高於預期", 1], ["加拿大央行釋出鷹派訊號", -1]],
+  "0050":  [["台積電法說會釋出樂觀展望", 1], ["外資連續賣超台股", -1], ["AI 伺服器出貨創新高", 1], ["台幣急升壓抑電子股", -1]],
+  "00878": [["高股息成分股宣布加碼配息", 1], ["殖利率走升，高股息族群承壓", -1], ["央行降息預期升溫", 1], ["成分股季度調整引發賣壓", -1]],
+  "SPY":   [["美國企業財報優於預期", 1], ["聯準會暗示延後降息", -1], ["美國消費數據強勁", 1], ["美國經濟衰退疑慮升溫", -1]],
+  "QQQ":   [["科技巨頭財報亮眼", 1], ["晶片出口管制升級", -1], ["AI 需求帶動科技股反彈", 1], ["美債殖利率大漲，科技股重挫", -1]],
 };
 
 const HISTORY = 160;
@@ -133,15 +164,19 @@ export function createMarketState(seed = 20261015, { warmup = 90, history = HIST
   return ms;
 }
 
+// 這份行情狀態實際有的商品。伺服器裡還在跑的舊私有行情是在加入 ETF 之前建立的，
+// 只有 6 個外匯；用它自己的清單推進，舊持倉的價格序列就和以前逐位元相同。
+const statePairs = ms => Object.keys(PAIRS).filter(p => Object.prototype.hasOwnProperty.call(ms.prices, p));
+
 function maybeNews(ms) {
   if (nextRand(ms) >= 0.035) return null;
-  const pairs = Object.keys(PAIRS);
+  const pairs = statePairs(ms);
   const pair = pairs[Math.floor(nextRand(ms) * pairs.length)];
   const list = HEADLINES[pair];
   const [text, claimed] = list[Math.floor(nextRand(ms) * list.length)];
   const reversed = nextRand(ms) < 0.24;
   const actual = reversed ? -claimed : claimed;
-  ms.bias[pair] = { v: actual * 0.0009, left: NEWS_SETTLE };
+  ms.bias[pair] = { v: actual * 0.0009 * volOf(pair), left: NEWS_SETTLE };
   const item = { step: ms.step, pair, text, claimed, reversed };
   ms.news.push(item);
   if (ms.news.length > NEWS_KEEP) ms.news.shift();
@@ -151,12 +186,13 @@ function maybeNews(ms) {
 function candleFor(ms, p) {
   const prevClose = ms.prices[p];
   let open = prevClose;
-  if (nextRand(ms) < 0.018) open *= 1 + (nextRand(ms) < 0.5 ? -1 : 1) * 0.0095;
+  const vol = volOf(p);   // 外匯 = 1，算式結果與加入 ETF 前完全相同
+  if (nextRand(ms) < 0.018) open *= 1 + (nextRand(ms) < 0.5 ? -1 : 1) * 0.0095 * vol;
   let x = open, hi = open, lo = open;
   const b = ms.bias[p];
   for (let k = 0; k < 4; k++) {
-    x *= 1 + Math.sin((ms.step + k / 4) / 40 + ms.phase[p]) * 0.0001;
-    x *= 1 + (nextRand(ms) * 2 - 1) * 0.00105;
+    x *= 1 + Math.sin((ms.step + k / 4) / 40 + ms.phase[p]) * 0.0001 * vol;
+    x *= 1 + (nextRand(ms) * 2 - 1) * 0.00105 * vol;
     if (b.left > 0) x *= 1 + b.v / 4;
     if (x > hi) hi = x;
     if (x < lo) lo = x;
@@ -176,7 +212,7 @@ function candleFor(ms, p) {
 export function stepMarket(ms) {
   ms.step++;
   const n = maybeNews(ms);
-  for (const p of Object.keys(PAIRS)) candleFor(ms, p);
+  for (const p of statePairs(ms)) candleFor(ms, p);
   return { prices: { ...ms.prices }, news: n };
 }
 
@@ -193,7 +229,7 @@ export function createMarket(seed = 20261015, opts = {}) {
     state: ms,
     prices: () => ({ ...ms.prices }),
     get: (p) => ms.prices[p],
-    pairs: () => Object.keys(PAIRS),
+    pairs: () => statePairs(ms),
     candles: (p) => ms.candles[p],
     news: () => ms.news,
     step: () => ms.step,
