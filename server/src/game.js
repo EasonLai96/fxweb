@@ -76,6 +76,17 @@ function settle(g, prices, t, step, events, expire = false) {
       events.push({ type: 'warning', id: pos.id, pair: pos.pair, lossPct: loss, step });
     }
   }
+  // 止損／止盈：強平之後檢查（同一根若強平線先到就已強平，不會再走到這裡）。
+  // 用中間價判斷是否觸發，按實際成交價（含價差／滑價）平倉。
+  for (const pos of [...a.positions]) {
+    const mid = prices[pos.pair];
+    const hit = E.stopHit(pos, mid);
+    if (!hit) continue;
+    const fill = closeFill(pos, mid, t), reason = E.STOP_REASONS[hit];
+    const result = E.closePosition(a, pos.id, fill, t, reason);
+    recordClose(g, pos, result.pnl, reason, t);
+    events.push({ type: 'stop', kind: hit, id: pos.id, pair: pos.pair, price: fill, pnl: result.pnl, step });
+  }
   if (expire) {
     for (const pos of [...a.positions]) {
       if (!Number.isFinite(pos.openedAt) || pos.openedAt < 0 || pos.openedAt > t)
@@ -223,7 +234,7 @@ function accountPrices(g, secret, extra = [], sentiment) {
   if (shared(g)) { secretRequired(secret); return tickPrices(secret, g.cursor, [...new Set([...heldPairs(g.account), ...extra])], null, sentiment); }
   return { ...g.market.prices };
 }
-export function openOrder(g, { pair, side, leverage, margin, max = false }, now, marketSecret, sentiment) {
+export function openOrder(g, { pair, side, leverage, margin, max = false, sl = null, tp = null }, now, marketSecret, sentiment) {
   requireCaughtUp(g, now);
   if (!shared(g) && marketSecret !== undefined) throw new GameError('舊市場停止開倉；請先平掉舊持倉以切換全球市場');
   if (typeof pair !== 'string' || !Object.prototype.hasOwnProperty.call(PAIRS, pair)) throw new GameError('不支援的商品');
@@ -256,7 +267,7 @@ export function openOrder(g, { pair, side, leverage, margin, max = false }, now,
   // Preserve the exact order time: expiry occurs on the first historical tick
   // at/after openedAt + seven days, never up to 1499 ms early.
   const fillPrices = realistic ? { ...prices, [pair]: executionPrice(prices[pair], pair, side, notional, now) } : prices;
-  const r = E.openPosition(g.account, fillPrices, { pair, side, leverage, notional, time: now });
+  const r = E.openPosition(g.account, fillPrices, { pair, side, leverage, notional, time: now, sl, tp, refPrice: prices[pair] });
   if (!r.ok) throw new GameError(r.error);
   if (realistic) {
     r.position.executionVersion = EXECUTION_VERSION;
@@ -307,6 +318,18 @@ export function addPositionMargin(g, id, amount, source, now, marketSecret, sent
   const r = source === 'loan'
     ? E.borrowToMargin(g.account, prices, id, amount, now)
     : E.addMargin(g.account, prices, id, amount, now);
+  if (!r.ok) throw new GameError(r.error);
+  trimAccount(g.account);
+  return r;
+}
+// 修改持倉的止損止盈（傳 null 清除）。以帳戶結算點的中間價驗證方向。
+export function setPositionStops(g, id, sl, tp, now, marketSecret, sentiment) {
+  requireCaughtUp(g, now);
+  if (!Number.isSafeInteger(id)) throw new GameError('持倉編號無效');
+  const pos = g.account.positions.find(p => p.id === id);
+  if (!pos) throw new GameError('找不到持倉（可能已被平倉）');
+  const prices = accountPrices(g, marketSecret, [], sentiment);
+  const r = E.setStops(g.account, id, prices[pos.pair], sl, tp, now);
   if (!r.ok) throw new GameError(r.error);
   trimAccount(g.account);
   return r;

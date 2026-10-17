@@ -15,7 +15,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Nunito:wght@600;700;800;900&display=swap">
-<link rel="stylesheet" href="styles.css?v=20261017a">
+<link rel="stylesheet" href="styles.css?v=20261017b">
 </head>
 <body>
 <div class="app-shell">
@@ -135,6 +135,14 @@
               <div class="range-ticks"><span>1×</span><span>3×</span><span>5×</span><span>10×</span><span>50×</span><span>100×</span></div>
             </div>
           </div>
+          <details id="stopsBox" class="stops-box">
+            <summary>止損／止盈 <span>選填</span></summary>
+            <div class="stops-fields">
+              <label>止損價<input id="slInput" type="number" step="any" inputmode="decimal" placeholder="不設"></label>
+              <label>止盈價<input id="tpInput" type="number" step="any" inputmode="decimal" placeholder="不設"></label>
+            </div>
+            <p id="stopsHint" class="stops-hint">價格觸及就自動平倉。做多：止損低於現價、止盈高於現價；做空相反。</p>
+          </details>
           <p id="leverageNotice" class="leverage-warning hidden" role="status">高槓桿風險：極小波動也可能在下一根 K 線強平；跳空可能穿倉，手續費也更高。</p>
           <div class="order-preview">
             <div><span>名目倉位</span><strong id="notional">$0.00</strong></div>
@@ -266,6 +274,21 @@
   </div>
 </div>
 
+<div id="stopsModal" class="modal-backdrop hidden" role="presentation">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="stopsTitle">
+    <button id="stopsClose" class="modal-x" aria-label="關閉" type="button">×</button>
+    <div class="modal-icon" aria-hidden="true">⇅</div>
+    <h2 id="stopsTitle">止損／止盈</h2>
+    <p id="stopsMsg"></p>
+    <div class="stops-fields">
+      <label>止損價<input id="slEdit" type="number" step="any" inputmode="decimal" placeholder="不設"></label>
+      <label>止盈價<input id="tpEdit" type="number" step="any" inputmode="decimal" placeholder="不設"></label>
+    </div>
+    <p id="stopsEditHint" class="stops-hint"></p>
+    <div class="modal-actions"><button id="stopsClear" class="outline-button" type="button">全部取消</button><button id="stopsSave" class="primary-button" type="button">儲存</button></div>
+  </div>
+</div>
+
 <div id="riskModal" class="modal-backdrop hidden" role="presentation">
   <div class="modal risk-modal" role="dialog" aria-modal="true" aria-labelledby="riskTitle">
     <button id="riskClose" class="modal-x" aria-label="暫不處理" type="button">×</button>
@@ -294,7 +317,7 @@
   </div>
 </div>
 
-<script type="module" src="app.mjs?v=20261017a"></script>
+<script type="module" src="app.mjs?v=20261017b"></script>
 <script>
 // 安裝到手機桌面（PWA）：只快取靜態檔，API 永遠走網路。
 if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));

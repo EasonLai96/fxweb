@@ -4,7 +4,7 @@ export const CHART_THEMES = {
   day:   { bg: "#24383c", grid: "#3c5254", vgrid: "#32494b", axis: "#91a9a8", date: "#7f9999", up: "#8fddb1", down: "#f19aa8", dash: "#d5e1b3" },
   night: { bg: "#0e2023", grid: "#24413c", vgrid: "#1c3436", axis: "#7e9a94", date: "#5f7d78", up: "#8fddb1", down: "#f19aa8", dash: "#c9d8a8" },
 };
-const MA10 = "#f3d27a", MA30 = "#8ec5ff", ENTRY = "#8ec5ff", LIQ = "#f2a76b";
+const MA10 = "#f3d27a", MA30 = "#8ec5ff", ENTRY = "#8ec5ff", LIQ = "#f2a76b", SL = "#ef6f7a", TP = "#4cc38a";
 
 // 畫布的 CSS 尺寸快取。每次重畫都呼叫 getBoundingClientRect() 會強制瀏覽器同步重排整頁；
 // 每 1.5 秒 16 張畫布 × 前面剛改過 DOM 文字 = 連續 16 次整頁重排，手機上會卡到掉幀。
@@ -130,7 +130,7 @@ export function drawCandles(canvas, all, { theme = "day", digits = 4, lines = []
   }
 
   for (const l of inRange) {
-    const y = yOf(l.price), color = l.kind === "liq" ? LIQ : ENTRY;
+    const y = yOf(l.price), color = l.kind === "liq" ? LIQ : l.kind === "sl" ? SL : l.kind === "tp" ? TP : ENTRY;
     ctx.strokeStyle = color; ctx.lineWidth = 1.2; ctx.setLineDash([6, 4]);
     ctx.beginPath(); ctx.moveTo(left, y); ctx.lineTo(right, y); ctx.stroke(); ctx.setLineDash([]);
     ctx.font = "bold 10px sans-serif"; const tw = ctx.measureText(l.label).width;

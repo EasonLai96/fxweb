@@ -196,7 +196,7 @@ export function metrics(state, prices) {
   };
 }
 
-export function openPosition(state, prices, { pair, side, leverage, notional, time }) {
+export function openPosition(state, prices, { pair, side, leverage, notional, time, sl = null, tp = null, refPrice }) {
   if (!LEVERAGES.includes(leverage)) return { ok: false, error: "槓桿不在允許範圍" };
   if (!(notional > 0)) return { ok: false, error: "名目價值必須大於 0" };
   if (side !== 1 && side !== -1) return { ok: false, error: "方向錯誤" };
@@ -204,12 +204,17 @@ export function openPosition(state, prices, { pair, side, leverage, notional, ti
   if (!(price > 0)) return { ok: false, error: "沒有有效報價" };
   if (isFrozen(state, prices)) return { ok: false, error: "帳戶已凍結（淨值 <= 0），請先平倉或重置" };
 
+  // 止損止盈以「中間價」（refPrice，伺服器新倉的成交價含價差，不能拿來比）驗證
+  const stops = normalizeStops(side, refPrice > 0 ? refPrice : price, sl, tp);
+  if (!stops.ok) return stops;
+
   const margin = notional / leverage;
   const fee = feeFor(notional, leverage);
   if (freeMargin(state, prices) < margin + fee) return { ok: false, error: "可用保證金不足" };
 
   const units = isUsdBase(pair) ? notional : notional / price;
   const pos = { id: state.nextId++, pair, side, leverage, notional, units, entry: price, margin, feePaid: fee, openedAt: time };
+  applyStops(pos, stops.sl, stops.tp);
   state.cash -= fee;
   state.positions.push(pos);
   state.log.push({ t: time, type: "open", id: pos.id, pair, side, notional, leverage, price, fee });
@@ -247,7 +252,68 @@ export function settleTick(state, prices, time) {
     closePosition(state, id, prices[pos.pair], time, "liquidated");
     events.push({ type: "liquidated", id, pair: pos.pair, borrowed, refused });
   }
+  for (const pos of [...state.positions]) {
+    const hit = stopHit(pos, prices[pos.pair]);
+    if (!hit) continue;
+    const r = closePosition(state, pos.id, prices[pos.pair], time, STOP_REASONS[hit]);
+    events.push({ type: "stop", kind: hit, id: pos.id, pair: pos.pair, price: prices[pos.pair], pnl: r.pnl });
+  }
   return events;
+}
+
+// ===== 止損／止盈 =====
+// 每筆持倉可帶 sl（止損價）與 tp（止盈價），兩者都可省略。觸發判斷用「中間價」，
+// 成交價由呼叫端決定（伺服器新倉含價差／滑價）。同一根先檢查強平，強平線先到就強平。
+//   做多：價格 <= 止損 或 >= 止盈；做空：價格 >= 止損 或 <= 止盈。
+export const STOP_REASONS = { sl: "stop_loss", tp: "take_profit" };
+const stopValue = v => v === null || v === undefined || v === "" ? null : v;
+
+// 驗證並正規化止損止盈。price 是目前中間價。回傳 { ok, sl, tp } 或 { ok:false, error }。
+export function normalizeStops(side, price, sl, tp) {
+  sl = stopValue(sl); tp = stopValue(tp);
+  for (const [v, name] of [[sl, "止損價"], [tp, "止盈價"]]) {
+    if (v !== null && (typeof v !== "number" || !Number.isFinite(v) || v <= 0 || v > 1e12)) return { ok: false, error: `${name}格式錯誤` };
+  }
+  if (side !== 1 && side !== -1) return { ok: false, error: "方向錯誤" };
+  if (!(price > 0)) return { ok: false, error: "沒有有效報價" };
+  if (side === 1) {
+    if (sl !== null && sl >= price) return { ok: false, error: "做多的止損價要低於現價" };
+    if (tp !== null && tp <= price) return { ok: false, error: "做多的止盈價要高於現價" };
+  } else {
+    if (sl !== null && sl <= price) return { ok: false, error: "做空的止損價要高於現價" };
+    if (tp !== null && tp >= price) return { ok: false, error: "做空的止盈價要低於現價" };
+  }
+  return { ok: true, sl, tp };
+}
+
+function applyStops(pos, sl, tp) {
+  if (sl === null) delete pos.sl; else pos.sl = sl;
+  if (tp === null) delete pos.tp; else pos.tp = tp;
+}
+
+// 修改（或清除：傳 null）既有持倉的止損止盈。
+export function setStops(state, id, price, sl, tp, time) {
+  const pos = state.positions.find(p => p.id === id);
+  if (!pos) return { ok: false, error: "找不到持倉（可能已被平倉）" };
+  const r = normalizeStops(pos.side, price, sl, tp);
+  if (!r.ok) return r;
+  applyStops(pos, r.sl, r.tp);
+  state.log.push({ t: time, type: "stops", id, sl: r.sl, tp: r.tp });
+  return { ok: true, id, sl: r.sl, tp: r.tp };
+}
+
+// 這個價格是否觸發止損止盈：回傳 "sl" / "tp" / null。兩者同時成立（理論上不會）時以止損為準。
+export function stopHit(pos, price) {
+  if (!(price > 0)) return null;
+  const sl = pos.sl, tp = pos.tp;
+  if (pos.side === 1) {
+    if (sl > 0 && price <= sl) return "sl";
+    if (tp > 0 && price >= tp) return "tp";
+  } else {
+    if (sl > 0 && price >= sl) return "sl";
+    if (tp > 0 && price <= tp) return "tp";
+  }
+  return null;
 }
 
 export function resetAccount(state) {

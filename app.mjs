@@ -1,13 +1,13 @@
-import { initExtras } from "./extras.mjs?v=20261017a";
-import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261017a";
-import * as E from "./engine.mjs?v=20261017a";
-import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261017a";
-import * as Store from "./store.mjs?v=20261017a";
-import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261017a";
-import * as Cloud from "./cloud.mjs?v=20261017a";
-import { createRemoteMarket } from "./remote.mjs?v=20261017a";
-import { createAchievementBook } from "./achievements.mjs?v=20261017a";
-import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261017a";
+import { initExtras } from "./extras.mjs?v=20261017b";
+import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261017b";
+import * as E from "./engine.mjs?v=20261017b";
+import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261017b";
+import * as Store from "./store.mjs?v=20261017b";
+import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261017b";
+import * as Cloud from "./cloud.mjs?v=20261017b";
+import { createRemoteMarket } from "./remote.mjs?v=20261017b";
+import { createAchievementBook } from "./achievements.mjs?v=20261017b";
+import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261017b";
 
 const THEME_KEY = "fxweb.theme";
 // One random id per tab lifetime; never derive presence from username or IP.
@@ -262,6 +262,8 @@ function renderChart() {
   if (ui.showPos) for (const pos of state.positions.filter(x => x.pair === p)) {
     lines.push({ price: pos.entry, kind: "entry", label: `#${pos.id} ${pos.side > 0 ? "多" : "空"} 進場` });
     lines.push({ price: E.liquidationPrice(pos), kind: "liq", label: `#${pos.id} 強平` });
+    if (pos.sl) lines.push({ price: pos.sl, kind: "sl", label: `#${pos.id} 止損` });
+    if (pos.tp) lines.push({ price: pos.tp, kind: "tp", label: `#${pos.id} 止盈` });
   }
   const step = market.step();
   const marks = ui.showNews ? market.news().filter(n => n.pair === p || n.moves?.[p] != null).map(n => n.event
@@ -295,21 +297,42 @@ function maxMargin(prices) {
   return E.maxAffordableMargin(E.freeMargin(state, valuation), ui.leverage); // 不設單筆最大金額
 }
 
+// 止損止盈輸入：空白 = 不設；回傳 { sl, tp } 或 { error }
+function readStops(slEl, tpEl) {
+  const one = el => { const v = el.value.trim(); if (!v) return null; const n = Number(v); return Number.isFinite(n) && n > 0 ? n : NaN; };
+  const sl = one(slEl), tp = one(tpEl);
+  if (Number.isNaN(sl) || Number.isNaN(tp)) return { error: "止損／止盈價格式錯誤" };
+  return { sl, tp };
+}
+function clearOrderStops() { $("slInput").value = ""; $("tpInput").value = ""; updateStopsBox(); }
+function updateStopsBox() {
+  const any = $("slInput").value.trim() || $("tpInput").value.trim();
+  $("stopsBox").classList.toggle("has-stops", !!any);
+  $("stopsBox").querySelector("summary span").textContent = any ? "已設定" : "選填";
+}
+const stopTxt = (pos, d) => (pos.sl ? `<span class="stop-tag sl">損 ${pos.sl.toFixed(d)}</span>` : "") + (pos.tp ? `<span class="stop-tag tp">盈 ${pos.tp.toFixed(d)}</span>` : "");
+
 async function order(side) {
   const margin = Number($("marginInput").value);
   if (!(margin >= 10)) { toast("保證金至少 $10", true); return; }
+  const stops = readStops($("slInput"), $("tpInput"));
+  if (stops.error) { toast(stops.error, true); return; }
+  const chk = E.normalizeStops(side, market.get(ui.pair), stops.sl, stops.tp);
+  if (!chk.ok) { toast(chk.error, true); $("stopsBox").open = true; return; }
+  const withStops = { ...(stops.sl ? { sl: stops.sl } : {}), ...(stops.tp ? { tp: stops.tp } : {}) };
   ui.margin = margin;
   const pair = ui.pair, candles = market.candles(pair).slice();
   if (mode === "server") {
     // MAX 由伺服器按送單當刻的帳戶價格重新計算；顯示在輸入框的數字可能已因行情更新而過時。
     const max = $("marginInput").dataset.maxOrder === "1";
-    const r = await serverCall(() => Cloud.game.open({ pair, side, leverage: ui.leverage, margin, ...(max ? { max: true } : {}) }, market.step()));
+    const r = await serverCall(() => Cloud.game.open({ pair, side, leverage: ui.leverage, margin, ...(max ? { max: true } : {}), ...withStops }, market.step()));
     const pos = r && r.result && r.result.opened;
     if (pos) {
       if (max) { ui.margin = pos.margin; $("marginInput").value = pos.margin; }
       delete $("marginInput").dataset.maxOrder;
-      toast(`已${side > 0 ? "做多" : "做空"} ${pair}・進場 ${pos.entry.toFixed(digits(pair))}・手續費 ${money(pos.feePaid)}`);
+      toast(`已${side > 0 ? "做多" : "做空"} ${pair}・進場 ${pos.entry.toFixed(digits(pair))}・手續費 ${money(pos.feePaid)}${pos.sl || pos.tp ? "・已設止損止盈" : ""}`);
       book.checkOpen({ side, entry: pos.entry, candles });
+      if (pos.sl || pos.tp) clearOrderStops();
     }
     return;
   }
@@ -317,10 +340,11 @@ async function order(side) {
   const guestMargin = $("marginInput").dataset.maxOrder === "1" ? maxMargin(guestPrices) : margin;
   delete $("marginInput").dataset.maxOrder;
   if (!(guestMargin >= 10)) { toast("可用保證金不足", true); return; }
-  const r = E.openPosition(state, guestPrices, { pair, side, leverage: ui.leverage, notional: guestMargin * ui.leverage, time: Date.now() });
+  const r = E.openPosition(state, guestPrices, { pair, side, leverage: ui.leverage, notional: guestMargin * ui.leverage, time: Date.now(), ...withStops });
   if (!r.ok) { toast(r.error, true); return; }
   if (guestMargin !== margin) { ui.margin = guestMargin; $("marginInput").value = guestMargin; }
-  toast(`已${side > 0 ? "做多" : "做空"} ${pair}・名目 ${money(r.position.notional)}・手續費 ${money(r.position.feePaid)}`);
+  toast(`已${side > 0 ? "做多" : "做空"} ${pair}・名目 ${money(r.position.notional)}・手續費 ${money(r.position.feePaid)}${r.position.sl || r.position.tp ? "・已設止損止盈" : ""}`);
+  if (r.position.sl || r.position.tp) clearOrderStops();
   book.checkOpen({ side, entry: r.position.entry, candles });
   afterChange();
 }
@@ -427,13 +451,13 @@ function renderPositions(prices) {
     const riskColor = risk >= E.WARN_LOSS ? cssVar("--down") : risk >= 0.3 ? "#e9a35a" : cssVar("--accent");
     return `<div class="position-row${risk >= E.WARN_LOSS ? " risky" : ""}">
       <div class="pos-name"><strong>${pos.pair}<span class="direction ${pos.side > 0 ? "long" : "short"}">${pos.side > 0 ? "做多" : "做空"}</span>${risk >= E.WARN_LOSS ? '<span class="risk-tag">風險偏高</span>' : ""}${pos.borrowed ? '<span class="risk-tag loan-tag">借款補倉</span>' : ""}</strong>
-        <small>${money(pos.margin)} 保證金・${pos.leverage}×・${money(pos.notional)} 倉位</small></div>
+        <small>${money(pos.margin)} 保證金・${pos.leverage}×・${money(pos.notional)} 倉位</small>${pos.sl || pos.tp ? `<div class="pos-stops">${stopTxt(pos, d)}</div>` : ""}</div>
       <div class="pos-cell pos-entry"><small>進場價</small><strong>${pos.entry.toFixed(d)}</strong></div>
       <div class="pos-cell"><small>現價</small><strong>${price.toFixed(d)}</strong></div>
       <div class="pos-cell pos-liq"><small>強平價</small><strong>${E.liquidationPrice(pos).toFixed(d)}</strong></div>
       <div class="pos-cell"><small>浮動盈虧</small><strong class="${signCls(pnl)}">${signedMoney(pnl)}</strong>
         <div class="risk-bar" title="距離強平"><i style="width:${riskW}%;background:${riskColor}"></i></div></div>
-      <div class="pos-actions"><button class="close-btn help-btn" type="button" data-help="${pos.id}" title="追加保證金或借款補倉">補倉</button><button class="close-btn" type="button" data-close="${pos.id}" data-pair="${pos.pair}">平倉</button></div>
+      <div class="pos-actions"><button class="close-btn" type="button" data-stops="${pos.id}" title="設定止損／止盈">${pos.sl || pos.tp ? "改止損盈" : "止損盈"}</button><button class="close-btn help-btn" type="button" data-help="${pos.id}" title="追加保證金或借款補倉">補倉</button><button class="close-btn" type="button" data-close="${pos.id}" data-pair="${pos.pair}">平倉</button></div>
     </div>`;
   }).join(""));
 }
@@ -449,7 +473,7 @@ function renderHistory() {
   if (!ui.historyOpen) return;
   const closes = state.log.filter(l => l.type === "close").slice(-15).reverse();
   setHtml($("history"), closes.length ? closes.map(l => `
-    <div class="history-row"><span>${l.reason === "liquidated" ? '<b class="liq-tag">強平</b>' : ""}#${l.id} ${l.pair} @ ${l.price.toFixed(digits(l.pair))}</span>
+    <div class="history-row"><span>${l.reason === "liquidated" ? '<b class="liq-tag">強平</b>' : l.reason === "stop_loss" ? '<b class="stop-hist stop-tag sl">止損</b>' : l.reason === "take_profit" ? '<b class="stop-hist stop-tag tp">止盈</b>' : ""}#${l.id} ${l.pair} @ ${l.price.toFixed(digits(l.pair))}</span>
     <strong class="${signCls(l.pnl)}">${signedMoney(l.pnl)}</strong></div>`).join("")
     : '<div class="empty-state">還沒有結算紀錄</div>');
 }
@@ -541,6 +565,14 @@ function showEvents(events) {
       if (risk && risk.id === ev.id) closeRisk();
     }
     if (ev.type === "expired") toast(`#${ev.id} ${ev.pair} 持倉滿 7 天，到期已自動平倉`);
+    if (ev.type === "stop") {
+      const tp = ev.kind === "tp";
+      toast(`#${ev.id} ${ev.pair} ${tp ? "觸及止盈" : "觸及止損"}，已自動平倉・${signedMoney(ev.pnl)}`, ev.pnl < 0);
+      if (ev.pnl > 0) book.checkClose({ pnl: ev.pnl });
+      warned.delete(ev.id);
+      if (risk && risk.id === ev.id) closeRisk();
+      if (stopsEditing === ev.id) closeStops();
+    }
   }
 }
 
@@ -675,7 +707,47 @@ async function riskIgnore() {
   saveCurrent(); renderAll();
 }
 
+/* ---------- 止損／止盈修改 ---------- */
+let stopsEditing = null;
+function openStops(id) {
+  const pos = state.positions.find(p => p.id === id);
+  if (!pos) return;
+  stopsEditing = id;
+  const d = digits(pos.pair), price = (mode === "server" && settledPrices?.[pos.pair]) || market.get(pos.pair);
+  $("stopsTitle").textContent = `止損／止盈：#${pos.id} ${pos.pair}`;
+  $("stopsMsg").textContent = `${pos.side > 0 ? "做多" : "做空"}・進場 ${pos.entry.toFixed(d)}・現價 ${price.toFixed(d)}・強平價 ${E.liquidationPrice(pos).toFixed(d)}`;
+  $("slEdit").value = pos.sl ? pos.sl.toFixed(d) : ""; $("tpEdit").value = pos.tp ? pos.tp.toFixed(d) : "";
+  $("stopsEditHint").className = "stops-hint";
+  $("stopsEditHint").textContent = pos.side > 0 ? "做多：止損要低於現價、止盈要高於現價。留空 = 不設。" : "做空：止損要高於現價、止盈要低於現價。留空 = 不設。";
+  $("stopsModal").classList.remove("hidden");
+  setTimeout(() => $("slEdit").focus(), 30);
+}
+function closeStops() { stopsEditing = null; $("stopsModal").classList.add("hidden"); }
+async function saveStops(clear = false) {
+  const id = stopsEditing, pos = state.positions.find(p => p.id === id);
+  if (!pos) { closeStops(); return; }
+  const v = clear ? { sl: null, tp: null } : readStops($("slEdit"), $("tpEdit"));
+  const bad = msg => { $("stopsEditHint").className = "stops-hint bad"; $("stopsEditHint").textContent = msg; };
+  if (v.error) { bad(v.error); return; }
+  if (mode === "server") {
+    const r = await serverCall(() => Cloud.game.stops(id, v.sl, v.tp, market.step()));
+    if (r && r.result && r.result.stops) { closeStops(); toast(clear || (!v.sl && !v.tp) ? `已取消 #${id} 的止損止盈` : `已更新 #${id} 的止損止盈`); }
+    return;
+  }
+  const r = E.setStops(state, id, market.get(pos.pair), v.sl, v.tp, Date.now());
+  if (!r.ok) { bad(r.error); return; }
+  closeStops();
+  toast(clear || (!v.sl && !v.tp) ? `已取消 #${id} 的止損止盈` : `已更新 #${id} 的止損止盈`);
+  saveCurrent(); renderAll();
+}
+
 function bindRisk() {
+  $("stopsSave").onclick = () => saveStops(false);
+  $("stopsClear").onclick = () => saveStops(true);
+  $("stopsClose").onclick = closeStops;
+  $("stopsModal").addEventListener("click", e => { if (e.target.id === "stopsModal") closeStops(); });
+  for (const id of ["slEdit", "tpEdit"]) $(id).addEventListener("keydown", e => { if (e.key === "Enter") saveStops(false); });
+  for (const id of ["slInput", "tpInput"]) $(id).addEventListener("input", updateStopsBox);
   $("riskAmount").addEventListener("input", updateRiskPreview);
   $("riskAddBtn").onclick = () => riskAdd("cash");
   $("riskLoanBtn").onclick = () => riskAdd("loan");
@@ -915,6 +987,8 @@ function bind() {
   $("positions").onclick = e => {
     const h = e.target.closest("[data-help]");
     if (h) { openRisk(Number(h.dataset.help), false); return; }
+    const st = e.target.closest("[data-stops]");
+    if (st) { openStops(Number(st.dataset.stops)); return; }
     const b = e.target.closest("[data-close]"); if (!b) return;
     closePos(Number(b.dataset.close), b.dataset.pair);
   };

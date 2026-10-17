@@ -544,3 +544,23 @@ body.shock-down::after, body.shock-up::after{content:"";position:fixed;inset:0;p
 body.shock-up::after{animation-name:flashUp}
 @media (prefers-reduced-motion:reduce){body.shock-down .app-shell,body.shock-down main,.ticker-tag.event{animation:none}}
 .pair-row.crypto > span:first-child > strong::after{content:"幣";margin-left:6px;padding:1px 5px;border-radius:5px;font:800 9px/1.4 sans-serif;vertical-align:2px;background:#fff3cf;color:#8a6a12}
+
+/* ── 止損／止盈 ── */
+.stops-box{margin-top:12px;border:1px solid var(--border);border-radius:11px;padding:8px 12px;background:var(--surface)}
+.stops-box summary{cursor:pointer;font-size:12px;font-weight:900;color:var(--text-deep);list-style:none;display:flex;justify-content:space-between;align-items:center}
+.stops-box summary::-webkit-details-marker{display:none}
+.stops-box summary::after{content:"▾";color:var(--text-muted);font-size:11px}
+.stops-box[open] summary::after{content:"▴"}
+.stops-box summary span{margin-left:auto;margin-right:6px;color:var(--text-muted);font:700 11px "DM Mono",monospace}
+.stops-box.has-stops{border-color:var(--accent-hover)}
+.stops-fields{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.stops-fields label{display:flex;flex-direction:column;gap:4px;font-size:11px;font-weight:800;color:var(--text-muted)}
+.stops-fields input{height:38px;border:1px solid var(--border-strong);border-radius:9px;padding:0 10px;background:var(--surface);color:var(--text-deep);font:600 13px "DM Mono",monospace;width:100%;min-width:0}
+.stops-fields input:focus{outline:none;border-color:var(--accent-hover);box-shadow:0 0 0 3px var(--focus-ring)}
+.stops-fields input.bad{border-color:var(--down)}
+.stops-hint{margin:6px 0 0;font-size:11px;line-height:1.5;color:var(--text-muted)}
+.stops-hint.bad{color:var(--down)}
+.stop-tag{display:inline-block;margin-left:4px;font:700 10px "DM Mono",monospace;padding:1px 5px;border-radius:5px;background:var(--surface-hover);color:var(--text-deep)}
+.stop-tag.sl{color:var(--down)}.stop-tag.tp{color:var(--up)}
+.stop-hist{font-size:10px;font-weight:900;padding:1px 5px;border-radius:5px;margin-right:4px;background:var(--surface-hover)}
+.pos-stops{margin-top:4px;display:flex;flex-wrap:wrap;gap:4px}.pos-stops .stop-tag{margin-left:0}
