@@ -1,13 +1,14 @@
-import { initExtras } from "./extras.mjs?v=20261017b";
-import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261017b";
-import * as E from "./engine.mjs?v=20261017b";
-import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261017b";
-import * as Store from "./store.mjs?v=20261017b";
-import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261017b";
-import * as Cloud from "./cloud.mjs?v=20261017b";
-import { createRemoteMarket } from "./remote.mjs?v=20261017b";
-import { createAchievementBook } from "./achievements.mjs?v=20261017b";
-import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261017b";
+import { initExtras } from "./extras.mjs?v=20261017c";
+import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261017c";
+import { initRooms } from "./rooms-ui.mjs?v=20261017c";
+import * as E from "./engine.mjs?v=20261017c";
+import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261017c";
+import * as Store from "./store.mjs?v=20261017c";
+import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261017c";
+import * as Cloud from "./cloud.mjs?v=20261017c";
+import { createRemoteMarket } from "./remote.mjs?v=20261017c";
+import { createAchievementBook } from "./achievements.mjs?v=20261017c";
+import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261017c";
 
 const THEME_KEY = "fxweb.theme";
 // One random id per tab lifetime; never derive presence from username or IP.
@@ -30,7 +31,7 @@ let state = null;
 let busy = false;           // 伺服器請求進行中
 let lastOk = 0;             // 上次成功連上伺服器的時間
 let modeEpoch = 0, catchingUp = false;
-let progress = null, resets = 0, extras = null, leaderUI = null;
+let progress = null, resets = 0, extras = null, leaderUI = null, roomsUI = null;
 let serverMarketMode = "shared", switchStatus = "ready", settledPrices = null, accountSettledAt = null, remainingTicks = 0, lastMarketMode = null;
 let execution = null; // 伺服器宣告的市價單流動性；舊版伺服器無此欄就維持原 MAX
 let sentiment = null, serverLoanLimit = 0; // 前一格已封存的玩家多空人數與遊戲模型機率
@@ -542,6 +543,7 @@ function renderNewsCenter() {
 function renderAll() {
   renderModeBadge();
   extras?.update();
+  roomsUI?.update();
   if (mode === "server" && !market.ready()) return;
   const prices = market.prices();
   renderPairs();
@@ -1192,5 +1194,18 @@ leaderUI = initLeaderboard({
   },
   onToast: toast,
   getContext: () => ({ mode, username: Cloud.user() }),
+});
+roomsUI = initRooms({
+  request: (action, data) => {
+    if (action === "list") return Cloud.rooms.list();
+    if (action === "create") return Cloud.rooms.create(data.name, data.nickname);
+    if (action === "join") return Cloud.rooms.join(data.code, data.nickname);
+    if (action === "leave") return Cloud.rooms.leave(data.code);
+    if (action === "board") return Cloud.rooms.board(data.code);
+    throw new Error("未知的好友房操作");
+  },
+  onToast: toast,
+  getContext: () => ({ mode, username: Cloud.user() }),
+  onNeedLogin: () => { authMode = "register"; openAuth(); },
 });
 setInterval(loop, 1500);

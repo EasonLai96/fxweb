@@ -8,6 +8,8 @@ import { presence, prunePresence } from "./presence.js";
 // 登入憑證：隨機 token，以 Authorization: Bearer 傳遞；資料庫只存 token 的 SHA-256。
 // 前端在 github.io、API 在 workers.dev，跨站 cookie 常被瀏覽器擋，所以用 Bearer token 而不是 cookie。
 
+import { createRoom, joinRoom, leaveRoom, myRooms, roomBoard, netScore } from "./rooms.js";
+import { netWorth } from "../../engine.mjs";
 import { newGame, advance, openOrder, closeOrder, resetGame, borrowLoan, repayLoan, addPositionMargin, refuseHelp, setPositionStops, view, GameError, PERSIST_EVERY, ensureSecureGame, ensureMarketMode } from "./game.js";
 
 const PBKDF2_ITER = 100000;
@@ -323,7 +325,12 @@ async function withGame(env, userId, mutate, request = null) {
     // instead of rebuilding from their creation tick on every subsequent request.
     const changed = !row || upgraded || catchingUp || (!!mutate && !previous) || adv.events.length > 0 || after - before >= PERSIST_EVERY;
     if (changed) {
-      if (!catchingUp && g.seasonParticipation?.status === 'active') updateSeasonScore(g, serverPrices(g, secret, sentiment), t);
+      if (!catchingUp) {
+        const px = serverPrices(g, secret, sentiment);
+        if (g.seasonParticipation?.status === 'active') updateSeasonScore(g, px, t);
+        // 好友房排名用：每次存檔順便記下淨資產報酬率（缺價時保留舊值，不寫壞）。
+        if (g.account.positions.every(p => px[p.pair] > 0)) { const ns = netScore(netWorth(g.account, px), t); if (ns) g.netScore = ns; }
+      }
       const text = JSON.stringify(g);
       let ok;
       if (!row) ok = await env.DB.prepare("INSERT INTO games (user_id, state, version, updated_at) VALUES (?, ?, 1, ?) ON CONFLICT(user_id) DO NOTHING RETURNING version").bind(userId, text, t).first();
@@ -386,6 +393,28 @@ const gameRepay = (req, env) => gameAction(req, env, (g, b, t) => ({ repaid: rep
 const gameMargin = (req, env) => gameAction(req, env, (g, b, t, secret, sentiment) => ({ margin: addPositionMargin(g, b.id, b.amount, b.source, t, secret, sentiment) }));
 const gameStops = (req, env) => gameAction(req, env, (g, b, t, secret, sentiment) => ({ stops: setPositionStops(g, b.id, b.sl ?? null, b.tp ?? null, t, secret, sentiment) }));
 const gameRefuse = (req, env) => gameAction(req, env, (g, b, t) => ({ refused: refuseHelp(g, b.id, t) }));
+// ===== 好友房 =====
+async function roomCall(req, env, fn, { write = false, touch = false } = {}) {
+  const user = await requireUser(req, env);
+  const body = req.method === "GET" ? null : await readJson(req, 1024);
+  if (write) await consumeRate(env, "rooms:" + user.id, 20, 10 * 60000);
+  else if (!memRate("rooms-read:" + user.id, 60, 60000)) throw new HttpError(429, "rate_limited", "操作太頻繁，請稍後再試");
+  try {
+    // 建房／加入時先存一次自己的帳戶，讓房間排行馬上有自己的成績。
+    // 行情補算中（409）就略過，成績之後一般存檔時會補上，不擋建房／加入。
+    if (touch) await withGame(env, user.id, () => ({})).catch(e => { if (!(e instanceof HttpError && e.status === 409)) throw e; });
+    return { status: 200, body: await fn(user, body, new URL(req.url)) };
+  } catch (e) {
+    if (e instanceof GameError) throw new HttpError(400, "room_error", e.message);
+    throw e;
+  }
+}
+const roomsList = (req, env) => roomCall(req, env, async user => ({ rooms: await myRooms(env, user.id) }));
+const roomsCreate = (req, env) => roomCall(req, env, async (user, b) => ({ room: await createRoom(env, user.id, b.name, b.nickname, now()) }), { write: true, touch: true });
+const roomsJoin = (req, env) => roomCall(req, env, async (user, b) => ({ room: await joinRoom(env, user.id, b.code, b.nickname, now()) }), { write: true, touch: true });
+const roomsLeave = (req, env) => roomCall(req, env, async (user, b) => ({ result: await leaveRoom(env, user.id, b.code) }), { write: true });
+const roomsBoard = (req, env) => roomCall(req, env, async (user, b, url) => ({ board: await roomBoard(env, user.id, url.searchParams.get("code")) }));
+
 async function leaderboardList(req, env) {
   await consumeRate(env, "board-ip:" + (req.headers.get("CF-Connecting-IP") || "local"), 90, 60000);
   const season = new URL(req.url).searchParams.get("season");
@@ -469,6 +498,11 @@ const ROUTES = {
   "POST /api/game/margin": gameMargin,
   "POST /api/game/refuse-help": gameRefuse,
   "POST /api/game/stops": gameStops,
+  "GET /api/rooms": roomsList,
+  "POST /api/rooms": roomsCreate,
+  "POST /api/rooms/join": roomsJoin,
+  "POST /api/rooms/leave": roomsLeave,
+  "GET /api/rooms/board": roomsBoard,
   "GET /api/leaderboard": leaderboardList,
   "GET /api/leaderboard/me": leaderboardMe,
   "POST /api/leaderboard/join": leaderboardJoin,

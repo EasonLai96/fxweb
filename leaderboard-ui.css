@@ -54,3 +54,13 @@
   .fx-leader-join{grid-template-columns:minmax(0,1fr)}.fx-leader-join button{width:100%}
 }
 @media(prefers-reduced-motion:reduce){.fx-leader-dialog *{scroll-behavior:auto}}
+/* 好友房（rooms-ui.mjs）沿用排行榜樣式 */
+.fx-extra-toolbar:has(.fx-room-launcher){grid-template-columns:repeat(6,minmax(0,1fr));max-width:720px}
+.fx-room-form{display:grid;gap:8px}
+.fx-room-form h3{margin:0}
+.fx-room-field{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:800;color:var(--text-muted,#6b8580)}
+.fx-room-field input{min-height:42px;border:1px solid var(--border-strong,#d9e8df);border-radius:10px;padding:0 12px;background:var(--surface,#fff);color:var(--text-deep,#2c4a46);font:600 14px Nunito,"PingFang TC","Microsoft JhengHei",sans-serif}
+.fx-room-row{grid-template-columns:minmax(0,1fr) auto}
+.fx-room-row .fx-leader-button{min-height:36px;padding:6px 12px;font-size:13px}
+.fx-room-me{outline:2px solid var(--accent-hover,#7cc9a0);outline-offset:-2px}
+@media(max-width:520px){.fx-extra-toolbar:has(.fx-room-launcher){gap:4px}.fx-extra-toolbar .fx-room-launcher{padding:9px 2px;font-size:12px}}
