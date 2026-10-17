@@ -69,3 +69,15 @@
 `node --test --no-warnings tests/*.test.mjs server/test/*.test.mjs`
 
 後端變更需與前端一起部署；本機修改不會自行更新正式 GitHub Pages／Workers。
+
+
+## AI 交易觀察室（獨立示範頁）
+
+主頁只提供單卡入口 `ai-demo.html`，不把控制面板併入原交易區。支援 2330.TW、0050.TW、AAPL、SPY、NVDA、BTC-USD、ETH-USD 的 TWSE 官方日收盤、Nasdaq 公開歷史日線與 Coinbase Exchange ticker／日線資料，Yahoo Finance 為備援；非授權即時報價，可能延遲或中斷，無虛構 fallback。台美股最長120小時、虛擬幣2小時，超過則禁止AI分析與新模擬交易。資料使用需遵守來源條款，正式商業／大流量使用應改合法授權行情。
+
+- 真實 AI：Cloudflare Workers AI `@cf/meta/llama-3.2-3b-instruct`，固定提示＋嚴格輸出驗證，只能 long/short/hold，附理由及風險。未啟用／逾時／無效輸出直接停用，不以規則冒充模型。
+- `GET /api/ai-demo/market?symbol=` 公開讀行情；`POST /api/ai-demo/decision {symbol}` 需登入，伺服器自行取得行情不接受用戶價。每帳號2次/分、10次/24小時；全站100次/24小時硬限額（失敗與快取命中也計）。模型同isolate同商品/時間/價快取，不保證跨isolate全域去重。Workers AI 推論可能消耗免費額度或產生帳單；已於正式環境驗證一次真實模型推論；推論會消耗服務額度。
+- 勾選自動模擬時，每次有效分析最多執行一筆，不會背景無限迴圈。分析只是教育內容，不保證獲利，無真實下單、無券商金鑰。
+- 台股模擬TWD100,000，美股與虛擬幣共用USD10,000，不換匯不混算。單筆用現金10%、1×合成曝險，進出各0.1%示意費；不含稅、借券與資金費，做空可超過投入虧損且無自動強平，不代表現實可融券或以報價成交。
+- 獨立本機帳本依帳號隔離，沒有可信成績。原遊戲帳戶／排行榜／持倉不受影響。
+- 部署必須含 Workers `[ai] binding = "AI"` 與新後端路由，再發佈前端。主頁維持單卡入口，控制與帳本僅在獨立頁呈現。

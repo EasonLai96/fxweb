@@ -1,3 +1,4 @@
+import { getDemoMarket, getDemoDecision, DemoError } from "./ai-observatory.js";
 import { ensureProgress } from "./progress.js";
 import { joinSeason, leaveSeason, updateSeasonScore, seasonParticipationView, publicLeaderboard, archivedLeaderboard, archiveSeason, previousSeason, currentSeason } from "./leaderboard.js";
 import { sharedPricer, absoluteTick } from "./shared-market.js";
@@ -501,7 +502,27 @@ function canonicalJson(value) {
   return JSON.stringify(value);
 }
 
+// Isolated educational AI demo: no game-account writes and no broker access.
+async function demoMarket(req, env) {
+  const ip = req.headers.get('CF-Connecting-IP') || 'unknown';
+  if (!memRate('demo-market:'+ip,30,60000)) throw new HttpError(429,'rate_limited','行情查詢太頻繁，請稍後');
+  try { return {status:200,body:await getDemoMarket(new URL(req.url).searchParams.get('symbol'),env)}; }
+  catch(e) { if(e instanceof DemoError) throw new HttpError(e.status,e.code,e.message); throw e; }
+}
+async function demoDecision(req, env) {
+  const user = await requireUser(req,env);
+  const body = await readJson(req,256);
+  if (typeof body.symbol !== 'string') throw new HttpError(400,'bad_symbol','請選擇示範商品');
+  await consumeRate(env,'demo-minute:'+user.id,2,60000);
+  await consumeRate(env,'demo-day:'+user.id,10,86400000);
+  await consumeRate(env,'demo-global-day',100,86400000);
+  try { return {status:200,body:await getDemoDecision(body.symbol,env)}; }
+  catch(e) { if(e instanceof DemoError) throw new HttpError(e.status,e.code,e.message); throw e; }
+}
+
 const ROUTES = {
+  "GET /api/ai-demo/market": demoMarket,
+  "POST /api/ai-demo/decision": demoDecision,
   "POST /api/online": onlineHeartbeat,
   "POST /api/register": register,
   "POST /api/login": login,

@@ -14,3 +14,7 @@ binding = "DB"
 database_name = "fxweb"
 database_id = "141a8848-44c3-4331-973c-efc1c83ffc8d"
 migrations_dir = "migrations"
+
+# Educational inference only; no broker credentials or real orders.
+[ai]
+binding = "AI"
