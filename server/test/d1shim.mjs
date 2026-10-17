@@ -18,7 +18,13 @@ export function createD1(migrationsPath) {
     first: async () => db.prepare(sql).get(...args) ?? null,
     all: async () => ({ results: db.prepare(sql).all(...args) }),
     run: async () => { const r = db.prepare(sql).run(...args); return { success: true, meta: { last_row_id: Number(r.lastInsertRowid), changes: r.changes } }; },
-    _exec() { return db.prepare(sql).run(...args); },
+    // 和 D1 的 batch 一樣：SELECT/RETURNING 回傳 { results }，寫入回傳 { meta }。
+    _exec() {
+      if (/^\s*(SELECT|WITH|PRAGMA)/i.test(sql) || /\bRETURNING\b/i.test(sql))
+        return { results: db.prepare(sql).all(...args), success: true, meta: { changes: 0 } };
+      const r = db.prepare(sql).run(...args);
+      return { success: true, meta: { last_row_id: Number(r.lastInsertRowid), changes: r.changes } };
+    },
   });
   return {
     prepare: sql => stmt(sql),

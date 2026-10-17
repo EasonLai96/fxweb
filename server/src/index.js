@@ -104,6 +104,27 @@ async function recordFail(env, key) {
 }
 async function clearFails(env, key) { await env.DB.prepare("DELETE FROM login_attempts WHERE key = ?").bind(key).run(); }
 
+// 每小時一次：清掉超過一天的限流列與已過期 session，避免 login_attempts / sessions 無限成長。
+// 讀取行情已不再寫限流，所以 login_attempts 只剩登入、註冊、救援與寫入動作。
+export async function hourlyCleanup(env, t = now()) {
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM login_attempts WHERE window_start < ?").bind(t - 86400000),
+    env.DB.prepare("DELETE FROM sessions WHERE expires_at < ?").bind(t),
+  ]);
+}
+
+// 記憶體限流（不寫 D1）：只用在高頻、無副作用的讀取。不同 isolate 各算各的，
+// 所以只是「擋住失控的迴圈」而不是嚴格上限；嚴格的限流仍用下面的 consumeRate。
+const memBuckets = new Map();
+export function memRate(key, max, windowMs, t = now()) {
+  let b = memBuckets.get(key);
+  if (!b || t - b.start >= windowMs) {
+    if (memBuckets.size > 5000) for (const [k, v] of memBuckets) if (t - v.start >= windowMs) memBuckets.delete(k);
+    b = { start: t, count: 0 }; memBuckets.set(key, b);
+  }
+  return ++b.count <= max;
+}
+
 // 原子預留額度：並行請求不能一起通過 check-then-increment。
 async function consumeRate(env, key, max = 10, window = LOGIN_WINDOW_MS) {
   const row = await env.DB.prepare(`INSERT INTO login_attempts (key, count, window_start) VALUES (?1, 1, ?2)
@@ -319,7 +340,9 @@ const sinceOf = req => { const v = new URL(req.url).searchParams.get("since"); r
 
 async function gameState(req, env) {
   const user = await requireUser(req, env);
-  await consumeRate(env, "game-read:" + user.id, 120, 60000);
+  // 讀取行情的限流改在記憶體做：每次輪詢都寫一次 D1（login_attempts）太貴，
+  // 是免費額度最先撞牆的地方。同一個 Worker isolate 內每人每分鐘最多 120 次。
+  if (!memRate("game-read:" + user.id, 120, 60000)) throw new HttpError(429, "rate_limited", "操作太頻繁，請稍後再試");
   const since = sinceOf(req);
   const { g, events, t, sentiment } = await withGame(env, user.id, null);
   return { status: 200, body: view(g, since, events, t, sharedSecret(env), sentiment) };
@@ -456,6 +479,8 @@ export default {
     await captureSentiment(env, event.scheduledTime);
     await prunePresence(env, event.scheduledTime);
     await archiveSeason(env, previousSeason(event.scheduledTime).id, event.scheduledTime);
+    // cron 每分鐘跑；只在每小時的整點做一次較重的清理。
+    if (new Date(event.scheduledTime).getUTCMinutes() === 0) await hourlyCleanup(env, event.scheduledTime);
   },
   async fetch(req, env) {
     const url = new URL(req.url);

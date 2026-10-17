@@ -1,13 +1,13 @@
-import { initExtras } from "./extras.mjs?v=20261016n";
-import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261016n";
-import * as E from "./engine.mjs?v=20261016n";
-import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261016n";
-import * as Store from "./store.mjs?v=20261016n";
-import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261016n";
-import * as Cloud from "./cloud.mjs?v=20261016n";
-import { createRemoteMarket } from "./remote.mjs?v=20261016n";
-import { createAchievementBook } from "./achievements.mjs?v=20261016n";
-import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261016n";
+import { initExtras } from "./extras.mjs?v=20261017a";
+import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261017a";
+import * as E from "./engine.mjs?v=20261017a";
+import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261017a";
+import * as Store from "./store.mjs?v=20261017a";
+import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261017a";
+import * as Cloud from "./cloud.mjs?v=20261017a";
+import { createRemoteMarket } from "./remote.mjs?v=20261017a";
+import { createAchievementBook } from "./achievements.mjs?v=20261017a";
+import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261017a";
 
 const THEME_KEY = "fxweb.theme";
 // One random id per tab lifetime; never derive presence from username or IP.
@@ -286,7 +286,7 @@ function renderOrder(prices, m) {
   $("riskPercent").textContent = (E.LIQ_LOSS / lev * 100).toFixed(2) + "%";
   const fake = side => E.liquidationPrice({ pair: p, side, leverage: lev, entry: price });
   $("liqPreview").textContent = `${fake(1).toFixed(digits(p))} / ${fake(-1).toFixed(digits(p))}`;
-  const frozen = m.frozen || mode === "server" && (serverMarketMode === "legacy" || catchingUp || Date.now() - lastOk > 6000);
+  const frozen = m.frozen || mode === "server" && (serverMarketMode === "legacy" || catchingUp || Date.now() - lastOk > 9000);
   $("longBtn").disabled = frozen; $("shortBtn").disabled = frozen;
 }
 
@@ -777,8 +777,12 @@ function bindBattle() {
   $("battleExitBtn").onclick = leaveBattle;
 }
 
+// 省免費額度：在線心跳 60 秒一次（伺服器端在線視窗 150 秒），
+// 登入玩家行情 3 秒同步一次（一次帶回 2 根 K 線）；補算中仍維持 1.5 秒以盡快追平。
+const ONLINE_HEARTBEAT_MS = 60_000, SERVER_POLL_MS = 3000;
+let lastPollAt = 0;
 async function updateOnline(force = false) {
-  if (!Cloud.enabled() || document.hidden || onlinePending || (!force && Date.now() - onlineAt < 20_000)) return;
+  if (!Cloud.enabled() || document.hidden || onlinePending || (!force && Date.now() - onlineAt < ONLINE_HEARTBEAT_MS)) return;
   onlinePending = true; onlineAt = Date.now();
   try {
     const data = await Cloud.online(onlineTabId, visitorId);
@@ -787,12 +791,12 @@ async function updateOnline(force = false) {
     $("onlineCount").title = `最近 ${data.windowSeconds} 秒活躍：登入 ${data.players}、訪客 ${data.guests}（訪客依分頁計）`;
     if (data.totalVisitors > 0) $("visitorCount").textContent = `累計來訪 ${data.totalVisitors.toLocaleString("zh-TW")}`;
   } catch {
-    if (Date.now() - onlineSuccessAt > 75_000) $("onlineCount").textContent = '在線 —';
+    if (Date.now() - onlineSuccessAt > ONLINE_HEARTBEAT_MS * 2.5) $("onlineCount").textContent = '在線 —';
   } finally { onlinePending = false; }
 }
 function loop() {
   updateOnline();
-  if (mode === "server") { poll(); return; }
+  if (mode === "server") { if (catchingUp || Date.now() - lastPollAt >= SERVER_POLL_MS - 200) poll(); return; }
   if (mode === "battle") { if (battleAuto && !risk) nextBattleDay(); return; }
   if (ui.paused || (risk && risk.auto)) return;
   const { prices, news: plain, event } = market.tick();
@@ -855,7 +859,7 @@ function applyServer(v) {
 async function serverCall(fn) {
   if (busy) { toast("上一個操作還在處理中", true); return null; }
   if (!market.ready() || catchingUp) { toast("伺服器正在載入或結算離線行情，請稍候", true); return null; }
-  if (Date.now() - lastOk > 6000) { toast("報價已超過 6 秒未更新，請等待重新連線", true); poll(); return null; }
+  if (Date.now() - lastOk > 9000) { toast("報價已超過 9 秒未更新，請等待重新連線", true); poll(); return null; }
   const epoch = modeEpoch;
   busy = true; setTradeBusy(true);
   try { const r = await fn(); if (!currentRequest(epoch)) return null; applyServer(r); return r; }
@@ -866,7 +870,7 @@ async function serverCall(fn) {
 async function poll() {
   if (mode !== "server" || busy || document.hidden) return;
   const epoch = modeEpoch;
-  busy = true;
+  busy = true; lastPollAt = Date.now();
   try { const result = await Cloud.game.state(market.ready() ? market.step() : -1); if (currentRequest(epoch)) applyServer(result); }
   catch (e) { if (currentRequest(epoch)) handleServerError(e, true); }
   finally { if (epoch === modeEpoch) busy = false; }
@@ -893,13 +897,13 @@ function renderModeBadge() {
     return;
   }
   const server = mode === "server";
-  const offline = server && Date.now() - lastOk > 6000;
+  const offline = server && Date.now() - lastOk > 9000;
   $("modeBadge").textContent = server ? (!lastOk ? "連線中…" : catchingUp ? `補算中・差${remainingTicks}根` : offline ? "連線中斷" : serverMarketMode === "legacy" ? "舊帳戶個人行情" : "全場共同行情") : "訪客・本機練習";
   $("modeBadge").className = "mode-badge " + (server ? (offline ? "warn" : "server") : "guest");
   $("accountModeChip").textContent = server ? serverMarketMode === "legacy" ? "舊持倉・暫停新開倉" : catchingUp ? "共同行情・帳戶補算中" : "共同行情・登入帳戶" : "訪客模式・不計成績";
   $("guestNote").classList.toggle("hidden", server);
   $("pauseBtn").classList.toggle("hidden", server);
-  $("dataStatus").textContent = server ? catchingUp ? `帳戶已結算至 ${accountSettledAt ? new Date(accountSettledAt).toLocaleString("zh-TW") : "較早時段"}，尚差 ${remainingTicks} 根` : serverMarketMode === "legacy" ? "舊持倉沿用個人行情" : execution ? "共用行情・市價單含價差/滑價・槓桿融資計息" : "所有登入玩家同價・1.5 秒更新" : (ui.paused ? "已暫停" : "每 1.5 秒更新");
+  $("dataStatus").textContent = server ? catchingUp ? `帳戶已結算至 ${accountSettledAt ? new Date(accountSettledAt).toLocaleString("zh-TW") : "較早時段"}，尚差 ${remainingTicks} 根` : serverMarketMode === "legacy" ? "舊持倉沿用個人行情" : execution ? "共用行情・市價單含價差/滑價・槓桿融資計息" : "所有登入玩家同價・3 秒同步" : (ui.paused ? "已暫停" : "每 1.5 秒更新");
 }
 
 function bind() {
