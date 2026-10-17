@@ -221,6 +221,15 @@ export function openPosition(state, prices, { pair, side, leverage, notional, ti
   return { ok: true, position: pos };
 }
 
+// Missing fee basis denotes legacy/unknown costs. Absent carryPaid is the
+// engine's normal guest no-financing state only; execution-versioned positions
+// require a known financing basis, even after some subsequent carry is paid.
+function closeCosts(pos, fraction = 1) {
+  const feePaid = Number.isFinite(pos.feePaid) && pos.feePaid >= 0 ? pos.feePaid * fraction : null;
+  const carryPaid = pos.carryUnknown ? null : pos.carryPaid === undefined ? (pos.executionVersion === undefined ? 0 : null) : Number.isFinite(pos.carryPaid) && pos.carryPaid >= 0 ? pos.carryPaid * fraction : null;
+  return { feePaid, carryPaid, costsComplete: feePaid !== null && carryPaid !== null };
+}
+
 export function closePosition(state, id, price, time, reason = "manual") {
   const idx = state.positions.findIndex(p => p.id === id);
   if (idx < 0) return { ok: false, error: "找不到持倉" };
@@ -228,11 +237,54 @@ export function closePosition(state, id, price, time, reason = "manual") {
   const pnl = unrealizedPnl(pos, price);
   state.cash += pnl;
   state.positions.splice(idx, 1);
-  const entry = { t: time, type: "close", id, pair: pos.pair, price, pnl, reason };
+  const costs = closeCosts(pos);
+  const entry = { t: time, type: "close", id, pair: pos.pair, price, pnl, reason, ...costs,
+    netPnl: costs.costsComplete ? pnl - costs.feePaid - costs.carryPaid : null };
   if (pos.borrowed) entry.borrowed = true;       // 這筆倉位曾借款補倉（成就判定用）
   if (pos.refusedHelp) entry.refused = true;     // 風險提醒時選了「暫不處理」
   state.log.push(entry);
   return { ok: true, pnl };
+}
+
+// fraction is a fraction of the CURRENT remaining position, not the original.
+// Margin is collateral, not cash held aside: closing releases margin but credits
+// cash only with realized PnL. Entry fee/carry were already paid; never refund or
+// charge them again. Remaining cost basis is proportional, without cent rounding.
+export function closePositionPartial(state, id, price, time, fraction, reason = "manual") {
+  if (typeof fraction !== "number" || !Number.isFinite(fraction) || fraction <= 0 || fraction > 1) {
+    return { ok: false, error: "平倉比例必須大於 0 且不超過 1" };
+  }
+  if (typeof price !== "number" || !Number.isFinite(price) || price <= 0) return { ok: false, error: "沒有有效報價" };
+  const pos = state.positions.find(p => p.id === id);
+  if (!pos) return { ok: false, error: "找不到持倉" };
+  const costs = closeCosts(pos, fraction);
+  const detail = {
+    closedMargin: pos.margin * fraction, closedNotional: pos.notional * fraction,
+    closedEntryFee: costs.feePaid, closedCarryPaid: costs.carryPaid, costsComplete: costs.costsComplete,
+  };
+  if (fraction === 1) {
+    const result = closePosition(state, id, price, time, reason);
+    return { ...result, ...detail, closed: id, partial: false, fraction, netPnl: costs.costsComplete ? result.pnl - costs.feePaid - costs.carryPaid : null, remaining: null };
+  }
+  const closed = { margin: pos.margin * fraction, notional: pos.notional * fraction, units: baseUnits(pos) * fraction };
+  for (const field of ["feePaid", "carryPaid"]) {
+    if (pos[field] !== undefined) closed[field] = pos[field] * fraction;
+  }
+  const pnl = unrealizedPnl({ ...pos, ...closed }, price);
+  // Keep the original object/id/stops/entry/flags so references remain valid.
+  const units = baseUnits(pos);
+  for (const field of ["margin", "notional", "feePaid", "carryPaid"]) {
+    if (closed[field] !== undefined) pos[field] -= closed[field];
+  }
+  pos.units = units - closed.units; // also materialize units for legacy positions
+  state.cash += pnl;
+  const entry = { t: time, type: "partial_close", id, pair: pos.pair, price, pnl, reason, fraction, ...closed, ...costs,
+    netPnl: costs.costsComplete ? pnl - costs.feePaid - costs.carryPaid : null };
+  if (pos.borrowed) entry.borrowed = true;
+  if (pos.refusedHelp) entry.refused = true;
+  state.log.push(entry);
+  return { ok: true, pnl, ...detail, fraction, closed: id, closedPortion: closed, partial: true,
+    netPnl: entry.netPnl, remaining: pos, position: pos };
 }
 
 // 每根 tick：先檢查強平（價格可能跳空），回傳事件清單。先收集要強平的，再平，避免邊走邊改陣列。

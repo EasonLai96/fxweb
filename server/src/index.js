@@ -10,7 +10,7 @@ import { presence, prunePresence } from "./presence.js";
 
 import { createRoom, joinRoom, leaveRoom, myRooms, roomBoard, netScore } from "./rooms.js";
 import { netWorth } from "../../engine.mjs";
-import { newGame, advance, openOrder, closeOrder, resetGame, borrowLoan, repayLoan, addPositionMargin, refuseHelp, setPositionStops, view, GameError, PERSIST_EVERY, ensureSecureGame, ensureMarketMode } from "./game.js";
+import { newGame, advance, openOrder, closeOrder, resetGame, borrowLoan, repayLoan, addPositionMargin, refuseHelp, setPositionStops, closeOrderPartial, view, GameError, PERSIST_EVERY, ensureSecureGame, ensureMarketMode } from "./game.js";
 
 const PBKDF2_ITER = 100000;
 const SESSION_DAYS = 30;
@@ -133,9 +133,10 @@ async function consumeRate(env, key, max = 10, window = LOGIN_WINDOW_MS) {
     ON CONFLICT(key) DO UPDATE SET
       count = CASE WHEN ?2 - window_start >= ?3 THEN 1 ELSE count + 1 END,
       window_start = CASE WHEN ?2 - window_start >= ?3 THEN ?2 ELSE window_start END
-    WHERE ?2 - window_start >= ?3 OR count < ?4 RETURNING count`)
+    WHERE ?2 - window_start >= ?3 OR count < ?4 RETURNING count, window_start`)
     .bind(key, now(), window, max).first();
   if (!row) throw new HttpError(429, "rate_limited", "操作太頻繁，請稍後再試");
+  return row;
 }
 
 /* ---------- Session ---------- */
@@ -174,14 +175,13 @@ function validateCreds(body) {
 async function register(req, env) {
   const { username, password } = validateCreds(await readJson(req, 4096));
   const ip = req.headers.get("CF-Connecting-IP") || "local";
-  await checkRate(env, "reg:" + ip);
+  await consumeRate(env, "reg:" + ip);
   const salt = randomBytes(16);
   const hash = b64(await pbkdf2(password, salt, PBKDF2_ITER));
   const rc = newRecoveryCode(), rcSalt = randomBytes(16);
   try {
     const r = await env.DB.prepare("INSERT INTO users (username, pw_hash, pw_salt, pw_iter, created_at, rc_hash, rc_salt, pw_changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0)")
       .bind(username, hash, b64(salt), PBKDF2_ITER, now(), await hashRc(rc, rcSalt), b64(rcSalt)).run();
-    await recordFail(env, "reg:" + ip); // 註冊次數也算進節流，避免大量灌帳號
     const userId = r.meta.last_row_id;
     // 救援碼只在這裡出現一次，伺服器之後無法再查到原文
     return { status: 201, body: { token: await createSession(env, userId, hash, 0), user: { username }, recoveryCode: rc } };
@@ -195,15 +195,18 @@ async function login(req, env) {
   const { username, password } = validateCreds(await readJson(req, 4096));
   const ip = req.headers.get("CF-Connecting-IP") || "local";
   const key = "login:" + username.toLowerCase() + ":" + ip;
-  await checkRate(env, key);
+  const reservation = await consumeRate(env, key);
   const u = await env.DB.prepare("SELECT id, username, pw_hash, pw_salt, pw_iter, pw_changed_at FROM users WHERE username = ?").bind(username).first();
   const calc = b64(await pbkdf2(password, u ? unb64(u.pw_salt) : DUMMY_SALT, u ? u.pw_iter : PBKDF2_ITER));
   if (!u || !safeEqual(calc, u.pw_hash)) {
-    await recordFail(env, key);
     throw new HttpError(401, "bad_credentials", "帳號或密碼錯誤");
   }
-  await clearFails(env, key);
-  return { status: 200, body: { token: await createSession(env, u.id, u.pw_hash, u.pw_changed_at), user: { username: u.username } } };
+  const token = await createSession(env, u.id, u.pw_hash, u.pw_changed_at);
+  // Refund only this successful reservation. Deleting the bucket would erase
+  // concurrently reserved/failed attempts and reopen the PBKDF budget.
+  await env.DB.prepare("UPDATE login_attempts SET count = MAX(0, count - 1) WHERE key = ? AND window_start = ?")
+    .bind(key, reservation.window_start).run();
+  return { status: 200, body: { token, user: { username: u.username } } };
 }
 
 async function logout(req, env) {
@@ -382,7 +385,24 @@ const gameOpen = (req, env) => gameAction(req, env, (g, b, t, secret, sentiment)
   const pos = openOrder(g, { pair: b.pair, side: b.side, leverage: b.leverage, margin: b.margin, max: b.max === true, sl: b.sl ?? null, tp: b.tp ?? null }, t, secret, sentiment);
   return { opened: pos };
 });
-const gameClose = (req, env) => gameAction(req, env, (g, b, t, secret, sentiment) => ({ closed: b.id, pnl: closeOrder(g, b.id, t, secret, sentiment) }));
+const gameClose = (req, env) => gameAction(req, env, (g, b, t, secret, sentiment) => {
+  if (b.fraction === undefined) return { closed: b.id, pnl: closeOrder(g, b.id, t, secret, sentiment) };
+  if (b.requestId === undefined) throw new GameError('比例平倉必須提供 requestId');
+  return closeOrderPartial(g, b.id, b.fraction, t, secret, sentiment);
+});
+
+// Read only: never advances markets or replays an unknown request.
+async function gameReceipt(req, env) {
+  const user = await requireUser(req, env);
+  const id = new URL(req.url).searchParams.get('requestId');
+  if (!id || !/^[A-Za-z0-9_-]{1,64}$/.test(id)) throw new HttpError(400, 'bad_request_id', 'requestId 格式錯誤');
+  if (!memRate('receipt-read:' + user.id, 120, 60000)) throw new HttpError(429, 'rate_limited', '操作太頻繁，請稍後再試');
+  const row = await env.DB.prepare('SELECT state FROM games WHERE user_id = ?').bind(user.id).first();
+  const receipt = row && JSON.parse(row.state).requests?.find(r => r.id === id);
+  return { status: 200, body: { receiptProtocolVersion: 1, requestId: id,
+    serverTime: now(), retention: { maxReceipts: 128, bounded: true },
+    status: receipt ? 'confirmed' : 'unknown', ...(receipt ? { result: receipt.result } : {}) } };
+}
 const gameReset = (req, env) => gameAction(req, env, (g, b, t, secret) => {
   leaveSeason(g, t);
   resetGame(g, t, secret);
@@ -490,6 +510,7 @@ const ROUTES = {
   "POST /api/reset-password": resetPassword,
   "POST /api/recovery-code": newRecovery,
   "GET /api/game": gameState,
+  "GET /api/game/receipt": gameReceipt,
   "POST /api/game/open": gameOpen,
   "POST /api/game/close": gameClose,
   "POST /api/game/reset": gameReset,

@@ -1,6 +1,6 @@
 // 伺服器行情的本機鏡像：介面和 market.mjs 的 createMarket 一樣，畫面程式不用分兩套。
 // 這裡只存伺服器給的資料，不會自己產生價格。
-import { PAIRS } from "./market.mjs?v=20261017c";
+import { PAIRS } from "./market.mjs?v=20261017lab1";
 
 const HISTORY = 160;
 

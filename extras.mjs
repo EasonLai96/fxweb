@@ -1,11 +1,11 @@
-import { feeFor, LEVERAGES } from './engine.mjs?v=20261017c';
-import { getAvatar, saveAvatar, removeAvatar, avatarImage, DEFAULT_AVATAR_URL } from './avatar.mjs?v=20261017c';
+import { feeFor, LEVERAGES } from './engine.mjs?v=20261017lab1';
+import { getAvatar, saveAvatar, removeAvatar, avatarImage, DEFAULT_AVATAR_URL } from './avatar.mjs?v=20261017lab1';
 
 function defaultAvatarImg() {
   const img = document.createElement('img'); img.alt = '預設分享頭像'; img.src = DEFAULT_AVATAR_URL; return img;
 }
-import { drawShareCard } from './share-card.mjs?v=20261017c';
-import makeQR from './qr-code.mjs?v=20261017c';
+import { drawShareCard } from './share-card.mjs?v=20261017lab1';
+import makeQR from './qr-code.mjs?v=20261017lab1';
 
 const qr = makeQR(0, 'M');
 qr.addData('https://easonlai96.github.io/fxweb/');
@@ -38,13 +38,11 @@ function statsFor(context) {
     return { closed: s.closedTrades, wins: s.wins, net: s.netRealizedPnl, fees: s.feesPaid, resets: context.resets ?? context.progress?.resets };
   }
   const log = Array.isArray(context.account?.log) ? context.account.log : [];
-  const closes = log.filter(x => x.type === 'close' && finite(x.pnl));
-  const fees = log.reduce((total, x) => total + (finite(x.fee) ? x.fee : 0), 0);
-  const entryFees = new Map(log.filter(x => x.type === 'open' && finite(x.fee)).map(x => [x.id, x.fee]));
-  const closedIds = new Set(closes.map(x => x.id));
-  const closedFees = log.reduce((total, x) => total + (x.type === 'open' && closedIds.has(x.id) && finite(x.fee) ? x.fee : 0), 0);
-  return { closed: closes.length, wins: closes.filter(x => entryFees.has(x.id) && x.pnl - entryFees.get(x.id) > 1e-9).length,
-    net: closes.reduce((total, x) => total + x.pnl, 0) - closedFees, fees, resets: context.resets };
+  const closes = log.filter(x => ['close','partial_close'].includes(x.type) && finite(x.pnl));
+  const fees = log.reduce((total,x)=>total+(x.type==='open'&&finite(x.fee)?x.fee:0),0);
+  const known = closes.filter(x=>finite(x.netPnl)&&x.costsComplete!==false);
+  return {closed:closes.length,wins:known.filter(x=>x.netPnl>1e-9).length,
+    net:known.length===closes.length?known.reduce((total,x)=>total+x.netPnl,0):undefined,fees,resets:context.resets};
 }
 function statRows(context) {
   const s = statsFor(context);
@@ -124,8 +122,9 @@ export function initExtras({ getContext, refresh, onToast = () => {} }) {
     body.append(note(c.mode === 'server' ? '伺服器本回合紀錄（重置後重新計算）。未提供的欄位以「—」顯示。' : c.mode === 'battle' ? '經典戰役獨立帳戶的紀錄，不計成績；僅依目前保留的交易紀錄統計。' : '訪客本機練習，不計成績；僅依目前保留的交易紀錄統計，並非完整歷史。'));
     const grid = el('dl', 'fx-extra-stats');
     for (const [label, value] of statRows(c)) { const item = el('div'); item.append(el('dt', '', label), el('dd', '', value)); grid.append(item); }
-    body.append(grid, note('淨已實現損益扣除已平倉交易對應的開倉費，不包含持倉浮動損益；費用欄包含本回合所有開倉費（含未平倉），不再重複扣除。勝率以扣除對應開倉費後的獲利平倉筆數／全部平倉數計，無平倉時不計勝率。缺少開倉費資料的平倉不計勝負，但仍列入平倉總數。'));
+    body.append(grid, note('新版淨已實現損益扣除已平倉部位對應的開倉費與融資費，不含持倉浮盈虧或小金庫借款利息。費用欄為開倉費總額（含未平倉），不可再次扣除。每次部分平倉算一次結算；勝率以成本已知的盈利結算數／全部結算數計。舊資料成本不完整時不猜測，訪客淨損益顯示「—」。'));
     if (c.mode === 'server') body.append(note(`開始追蹤：${date(c.progress?.trackingSince)}。追蹤前的歷史不一定包含在內。`));
+    if (c.mode === 'server' && c.progress?.stats?.carryHistoryComplete === false) body.append(note('舊版累積統計可能未扣完整融資費；新版只從啟用時間起記錄，不重建舊統計或撤銷舊成就。'));
     if (c.mode === 'server' && c.progress?.stats?.missingEntryFeeCloses > 0) body.append(note(`有 ${number(c.progress.stats.missingEntryFeeCloses)} 筆平倉缺少開倉費，勝率並非完整可比較紀錄。`));
     if (c.mode === 'server' && c.progress?.trackingNote) body.append(note(c.progress.trackingNote));
     if (navigator.onLine === false || c.catchingUp) body.append(note('目前離線或伺服器補算中，以上為已取得的紀錄，並非最新確認值。'));

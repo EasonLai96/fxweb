@@ -15,7 +15,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Nunito:wght@600;700;800;900&display=swap">
-<link rel="stylesheet" href="styles.css?v=20261017c">
+<link rel="stylesheet" href="styles.css?v=20261017studio">
 </head>
 <body>
 <div class="app-shell">
@@ -39,6 +39,7 @@
   </header>
 
   <main class="main">
+    <div class="practice-heading"><div><span class="section-kicker">THE LEVERAGE CLUB / 01</span><h2>練習判斷。<em>不必賭上真金。</em></h2></div><span class="practice-label"><i aria-hidden="true"></i> SIMULATION ONLY · 虛構行情</span></div>
     <section id="battleBar" class="battle-bar hidden" aria-label="經典戰役進度">
       <div class="battle-bar-info">
         <span class="section-kicker">CLASSIC BATTLE</span>
@@ -55,7 +56,7 @@
     </section>
     <section class="balance-strip" aria-label="帳戶概覽">
       <div class="balance-lead">
-        <div class="eyebrow">我的交易小帳本 <span class="account-mode-chip" id="accountModeChip">訪客模式・不計成績</span></div>
+        <div class="eyebrow">PORTFOLIO / 我的模擬帳戶 <span class="account-mode-chip" id="accountModeChip">訪客模式・不計成績</span></div>
         <div class="balance-title">帳戶總權益 <span id="equity" class="money-large">$10,000.00</span></div>
         <p>報酬率 <b id="retPct">+0.00%</b><span id="guestNote">　訪客進度只存在這台裝置。<button type="button" class="inline-link" id="guestLoginLink">登入</button>後由伺服器計算，成績才算數。</span></p>
       </div>
@@ -104,7 +105,7 @@
           </div>
         </div>
 
-        <div class="panel positions-panel">
+        <div class="panel positions-panel" id="positionsPanel">
           <div class="panel-heading row-heading"><div><span class="section-kicker">OPEN POSITIONS</span><h2>持倉 <span id="positionCount" class="count-pill">0</span></h2></div><span id="riskHint" class="quiet-note">暫無持倉</span></div>
           <div id="positions" class="positions-list"></div>
         </div>
@@ -121,7 +122,7 @@
       </section>
 
       <aside class="right-column">
-        <section class="panel order-panel">
+        <section class="panel order-panel" id="orderPanel">
           <div class="panel-heading"><div><span class="section-kicker">NEW ORDER</span><h2>開一筆交易</h2></div><span class="order-decoration" aria-hidden="true">✿</span></div>
           <div class="order-pair"><span id="orderPairLabel">交易貨幣對</span><strong id="orderPair">EUR / USD</strong></div>
           <div class="compact-fields">
@@ -147,14 +148,15 @@
           <div class="order-preview">
             <div><span>名目倉位</span><strong id="notional">$0.00</strong></div>
             <div><span>開倉手續費</span><strong id="tradeFee">$0.00</strong></div>
-            <div><span>約可承受反向波動</span><strong id="riskPercent">0.00%</strong></div>
-            <div><span>強平價（多 / 空）</span><strong id="liqPreview">-</strong></div>
+            <div><span>反向波動（理論）</span><strong id="riskPercent">0.00%</strong></div>
+            <div><span>估算強平價（多 / 空）</span><strong id="liqPreview">-</strong></div>
           </div>
+          <a class="inline-link order-lab-link" href="#learningLab">風險預算試算 ↗</a>
           <div class="trade-buttons">
             <button id="longBtn" type="button" class="trade-button long"><span>↗</span> 做多 / 買入</button>
             <button id="shortBtn" type="button" class="trade-button short"><span>↘</span> 做空 / 賣出</button>
           </div>
-          <p class="order-note">登入玩家看同一組虛構行情，下單、平倉、強平都由伺服器計算。玩家每商品多空持倉以每帳號一票統計；至少三人參與時，多數做多使虛構模型短線偏跌，多數做空則偏漲。顯示的是額外小幅波動的遊戲模型抽籤機率，非整體價格漲跌機率、亦非真實市場預測；單一商品同帳號多空張數互抵。登入新倉持有滿 7 天時按到期行情自動平倉；舊版個人行情持倉不適用新期限，須先結清才切換。槓桿越高，開倉手續費越高。新成交規則下，市價單買賣價含示意價差與大單滑價（不設單筆最大金額）；槓桿名目借貸部分按真實時間計息（非實際券商費率），舊持倉不追收。畫面顯示中間價，實際成交可能不同。行情跳空可能穿過強平線，帳戶淨值可能變成負數；淨值 ≤ 0 時會凍結開倉。</p>
+          <details class="trading-rules"><summary>交易規則與風險說明 <span>下單前必讀 ↗</span></summary><p class="order-note"><b>強平線與反向波動為理論估算，未含平倉價差、滑價及融資成本；實際可能提早強平，不能視為保證。</b> 登入玩家看同一組虛構行情，下單、平倉、強平都由伺服器計算。玩家每商品多空持倉以每帳號一票統計；至少三人參與時，多數做多使虛構模型短線偏跌，多數做空則偏漲。顯示的是額外小幅波動的遊戲模型抽籤機率，非整體價格漲跌機率、亦非真實市場預測；單一商品同帳號多空張數互抵。登入新倉持有滿 7 天時按到期行情自動平倉；舊版個人行情持倉不適用新期限，須先結清才切換。槓桿越高，開倉手續費越高。新成交規則下，市價單買賣價含示意價差與大單滑價（不設單筆最大金額）；槓桿名目借貸部分按真實時間計息（非實際券商費率），舊持倉不追收。畫面顯示中間價，實際成交可能不同。行情跳空可能穿過強平線，帳戶淨值可能變成負數；淨值 ≤ 0 時會凍結開倉。</p></details>
         </section>
         <section class="panel bank-panel" id="bankPanel">
           <div class="bank-head">
@@ -198,7 +200,9 @@
         <div class="side-disclaimer">這是遊戲，不提供真實交易。行情為虛構模擬，不是即時報價。介面參考 bilibili 小遊戲「FX 简单!」重新製作。</div>
       </aside>
     </div>
+    <section id="learningLab" class="panel lab-panel" aria-label="交易學習工具"></section>
   </main>
+  <nav class="mobile-dock" aria-label="練習場快速導覽"><a href="#chart">⌁ <span>行情</span></a><a href="#orderPanel">⇅ <span>下單</span></a><a href="#positionsPanel">▤ <span>持倉</span></a><a href="#bankPanel">▦ <span>資金</span></a><a href="#learningLab">✧ <span>實驗室</span></a></nav>
 </div>
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
@@ -317,7 +321,7 @@
   </div>
 </div>
 
-<script type="module" src="app.mjs?v=20261017c"></script>
+<script type="module" src="app.mjs?v=20261017lab1"></script>
 <script>
 // 安裝到手機桌面（PWA）：只快取靜態檔，API 永遠走網路。
 if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));

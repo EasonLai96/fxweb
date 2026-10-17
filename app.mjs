@@ -1,14 +1,16 @@
-import { initExtras } from "./extras.mjs?v=20261017c";
-import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261017c";
-import { initRooms } from "./rooms-ui.mjs?v=20261017c";
-import * as E from "./engine.mjs?v=20261017c";
-import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261017c";
-import * as Store from "./store.mjs?v=20261017c";
-import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261017c";
-import * as Cloud from "./cloud.mjs?v=20261017c";
-import { createRemoteMarket } from "./remote.mjs?v=20261017c";
-import { createAchievementBook } from "./achievements.mjs?v=20261017c";
-import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261017c";
+import { initLearningLab, askSecure, downloadText } from './learning-lab.mjs';
+import { estimatedFriction, closeMidThreshold } from './risk-budget.mjs';
+import { initExtras } from "./extras.mjs?v=20261017lab1";
+import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261017lab1";
+import { initRooms } from "./rooms-ui.mjs?v=20261017lab1";
+import * as E from "./engine.mjs?v=20261017lab1";
+import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261017lab1";
+import * as Store from "./store.mjs?v=20261017lab1";
+import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261017lab1";
+import * as Cloud from "./cloud.mjs?v=20261017lab1";
+import { createRemoteMarket } from "./remote.mjs?v=20261017lab1";
+import { createAchievementBook } from "./achievements.mjs?v=20261017lab1";
+import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261017lab1";
 
 const THEME_KEY = "fxweb.theme";
 // One random id per tab lifetime; never derive presence from username or IP.
@@ -33,6 +35,7 @@ let lastOk = 0;             // 上次成功連上伺服器的時間
 let modeEpoch = 0, catchingUp = false;
 let progress = null, resets = 0, extras = null, leaderUI = null, roomsUI = null;
 let serverMarketMode = "shared", switchStatus = "ready", settledPrices = null, accountSettledAt = null, remainingTicks = 0, lastMarketMode = null;
+let lab = null, guestRecoveryPending = false, recoveryDialogOpen = false;
 let execution = null; // 伺服器宣告的市價單流動性；舊版伺服器無此欄就維持原 MAX
 let sentiment = null, serverLoanLimit = 0; // 前一格已封存的玩家多空人數與遊戲模型機率
 // 切換帳戶/登出後，舊請求不可覆蓋新畫面。
@@ -58,11 +61,31 @@ function enterGuest() {
   resetModeFlags();
   mode = "guest";
   book.setOwner(achOwner());
-  market = createMarket(Date.now() & 0x7fffffff);
-  state = Store.load() || E.createAccount(10000);
-  state.positions = state.positions.filter(p => market.get(p.pair) != null);
+  const saved = Store.loadGuest();
+  guestRecoveryPending = false;
+  if (saved.status === "ready") {
+    try { market = createMarket(1, { state: saved.market }); state = saved.account; }
+    catch { market = createMarket(Date.now() & 0x7fffffff); state = E.createAccount(10000); guestRecoveryPending = true; }
+  } else {
+    market = createMarket(Date.now() & 0x7fffffff);
+    state = E.createAccount(10000);
+    guestRecoveryPending = saved.status !== "empty";
+  }
+  if (guestRecoveryPending) { ui.paused = true; queueMicrotask(resolveGuestRecovery); }
   equityPts.length = 0; equityPts.push(E.equity(state, market.prices()));
   scanLog(state.log);
+}
+
+async function resolveGuestRecovery() {
+  if (recoveryDialogOpen) return; recoveryDialogOpen = true;
+  const epoch = modeEpoch;
+  const backup = Store.archiveGuest();
+  const agreed = await askSecure({title:"舊存檔缺少可接續行情",message:"為避免把舊持倉搬到新價格，目前已暫停交易且未覆寫舊存檔。你可以先下載原始備份，再選擇以 $10,000 建立新版練習帳戶。取消會保持暫停，舊檔不變。",confirmLabel:"保留備份並重新開始",download:backup.ok?()=>downloadText("guest-original-backup.json",backup.text):undefined});
+  recoveryDialogOpen = false;
+  if (epoch !== modeEpoch || mode !== "guest") return;
+  if (agreed && Store.resetGuest(E.createAccount(10000),market)) {
+    state = E.createAccount(10000); guestRecoveryPending = false; ui.paused = false; $("pauseBtn").textContent = "暫停"; renderAll(); toast("原存檔已保留備份，新版行情可接續儲存");
+  } else toast("舊存檔未改動；點重新開始可再次處理",true);
 }
 
 function enterServer() {
@@ -289,7 +312,8 @@ function renderOrder(prices, m) {
   $("riskPercent").textContent = (E.LIQ_LOSS / lev * 100).toFixed(2) + "%";
   const fake = side => E.liquidationPrice({ pair: p, side, leverage: lev, entry: price });
   $("liqPreview").textContent = `${fake(1).toFixed(digits(p))} / ${fake(-1).toFixed(digits(p))}`;
-  const frozen = m.frozen || mode === "server" && (serverMarketMode === "legacy" || catchingUp || Date.now() - lastOk > 9000);
+  const receiptLocked = mode === "server" && Cloud.receiptState().blocked;
+  const frozen = guestRecoveryPending || receiptLocked || m.frozen || mode === "server" && (serverMarketMode === "legacy" || catchingUp || Date.now() - lastOk > 9000);
   $("longBtn").disabled = frozen; $("shortBtn").disabled = frozen;
 }
 
@@ -314,6 +338,7 @@ function updateStopsBox() {
 const stopTxt = (pos, d) => (pos.sl ? `<span class="stop-tag sl">損 ${pos.sl.toFixed(d)}</span>` : "") + (pos.tp ? `<span class="stop-tag tp">盈 ${pos.tp.toFixed(d)}</span>` : "");
 
 async function order(side) {
+  if (guestRecoveryPending) { resolveGuestRecovery(); return; }
   const margin = Number($("marginInput").value);
   if (!(margin >= 10)) { toast("保證金至少 $10", true); return; }
   const stops = readStops($("slInput"), $("tpInput"));
@@ -332,6 +357,7 @@ async function order(side) {
       if (max) { ui.margin = pos.margin; $("marginInput").value = pos.margin; }
       delete $("marginInput").dataset.maxOrder;
       toast(`已${side > 0 ? "做多" : "做空"} ${pair}・進場 ${pos.entry.toFixed(digits(pair))}・手續費 ${money(pos.feePaid)}${pos.sl || pos.tp ? "・已設止損止盈" : ""}`);
+      lab?.recordOpen(pos);
       book.checkOpen({ side, entry: pos.entry, candles });
       if (pos.sl || pos.tp) clearOrderStops();
     }
@@ -346,23 +372,24 @@ async function order(side) {
   if (guestMargin !== margin) { ui.margin = guestMargin; $("marginInput").value = guestMargin; }
   toast(`已${side > 0 ? "做多" : "做空"} ${pair}・名目 ${money(r.position.notional)}・手續費 ${money(r.position.feePaid)}${r.position.sl || r.position.tp ? "・已設止損止盈" : ""}`);
   if (r.position.sl || r.position.tp) clearOrderStops();
+  lab?.recordOpen(r.position);
   book.checkOpen({ side, entry: r.position.entry, candles });
   afterChange();
 }
 
-async function closePos(id, pair) {
+async function closePos(id, pair, fraction = 1) {
   if (mode === "server") {
-    const r = await serverCall(() => Cloud.game.close(id, market.step()));
+    const r = await serverCall(() => Cloud.game.partialClose(id, fraction, market.step()));
     if (r && r.result) {
       toast(`已平倉・${r.result.pnl >= 0 ? "獲利" : "虧損"} ${signedMoney(r.result.pnl)}`, r.result.pnl < 0);
-      book.checkClose({ pnl: r.result.pnl });
+      book.checkClose({ pnl: r.result.netPnl ?? r.result.pnl });
     }
     return;
   }
-  const r = E.closePosition(state, id, market.get(pair), Date.now());
+  const r = E.closePositionPartial(state, id, market.get(pair), Date.now(), fraction);
   if (r.ok) {
     toast(`已平倉・${r.pnl >= 0 ? "獲利" : "虧損"} ${signedMoney(r.pnl)}`, r.pnl < 0);
-    book.checkClose({ pnl: r.pnl });
+    book.checkClose({ pnl: r.netPnl ?? r.pnl });
   }
   if (risk && risk.id === id) closeRisk();
   afterChange();
@@ -370,6 +397,7 @@ async function closePos(id, pair) {
 
 async function resetAll() {
   $("confirmModal").classList.add("hidden");
+  if (guestRecoveryPending) { resolveGuestRecovery(); return; }
   if (mode === "server") {
     const r = await serverCall(() => Cloud.game.reset(market.step()));
     if (r) { equityPts.length = 0; toast("帳戶已重置為 $10,000（行情不會重新開始）"); }
@@ -390,6 +418,7 @@ function loanCap() {
   return E.loanLimit(state, mode === "server" && settledPrices ? settledPrices : market.prices());
 }
 async function doBorrow() {
+  if (guestRecoveryPending) { resolveGuestRecovery(); return; }
   const amount = Number($("loanAmount").value);
   if (!(amount >= 1)) { toast("借款金額至少 $1", true); return; }
   if (amount > loanCap()) { toast(`目前可借上限 ${money(loanCap())}（淨資產 50%，最低 $200,000）`, true); return; }
@@ -410,6 +439,7 @@ async function doBorrow() {
 function clearLoanInput() { $("loanAmount").value = ""; updateBankPreview(); }
 
 async function doRepay() {
+  if (guestRecoveryPending) { resolveGuestRecovery(); return; }
   const owed = E.loanOwed(state);
   if (!(owed > 0)) { toast("目前沒有借款", true); return; }
   const raw = $("loanAmount").value.trim();
@@ -448,14 +478,15 @@ function renderPositions(prices) {
   }
   setHtml(root, state.positions.map(pos => {
     const price = prices[pos.pair], pnl = E.unrealizedPnl(pos, price), d = digits(pos.pair);
-    const risk = E.lossPct(pos, price), riskW = Math.min(100, risk / E.LIQ_LOSS * 100);
+    const closePrice = mode === "server" && pos.executionVersion ? price * (1 - pos.side * estimatedFriction(kindOf(pos.pair),pos.notional,Math.floor(Date.now()/1500)%20<2)) : price;
+    const risk = E.lossPct(pos, closePrice), riskW = Math.min(100, risk / E.LIQ_LOSS * 100);
     const riskColor = risk >= E.WARN_LOSS ? cssVar("--down") : risk >= 0.3 ? "#e9a35a" : cssVar("--accent");
     return `<div class="position-row${risk >= E.WARN_LOSS ? " risky" : ""}">
       <div class="pos-name"><strong>${pos.pair}<span class="direction ${pos.side > 0 ? "long" : "short"}">${pos.side > 0 ? "做多" : "做空"}</span>${risk >= E.WARN_LOSS ? '<span class="risk-tag">風險偏高</span>' : ""}${pos.borrowed ? '<span class="risk-tag loan-tag">借款補倉</span>' : ""}</strong>
         <small>${money(pos.margin)} 保證金・${pos.leverage}×・${money(pos.notional)} 倉位</small>${pos.sl || pos.tp ? `<div class="pos-stops">${stopTxt(pos, d)}</div>` : ""}</div>
       <div class="pos-cell pos-entry"><small>進場價</small><strong>${pos.entry.toFixed(d)}</strong></div>
       <div class="pos-cell"><small>現價</small><strong>${price.toFixed(d)}</strong></div>
-      <div class="pos-cell pos-liq"><small>強平價</small><strong>${E.liquidationPrice(pos).toFixed(d)}</strong></div>
+      <div class="pos-cell pos-liq"><small>估算強平中間價</small><strong>${closeMidThreshold(pos, mode === "server" && pos.executionVersion ? estimatedFriction(kindOf(pos.pair),pos.notional,Math.floor(Date.now()/1500)%20<2) : 0).toFixed(d)}</strong></div>
       <div class="pos-cell"><small>浮動盈虧</small><strong class="${signCls(pnl)}">${signedMoney(pnl)}</strong>
         <div class="risk-bar" title="距離強平"><i style="width:${riskW}%;background:${riskColor}"></i></div></div>
       <div class="pos-actions"><button class="close-btn" type="button" data-stops="${pos.id}" title="設定止損／止盈">${pos.sl || pos.tp ? "改止損盈" : "止損盈"}</button><button class="close-btn help-btn" type="button" data-help="${pos.id}" title="追加保證金或借款補倉">補倉</button><button class="close-btn" type="button" data-close="${pos.id}" data-pair="${pos.pair}">平倉</button></div>
@@ -472,9 +503,9 @@ function renderHistory() {
   $("historyToggle").textContent = ui.historyOpen ? "收起紀錄" : "展開紀錄";
   $("history").classList.toggle("hidden", !ui.historyOpen);
   if (!ui.historyOpen) return;
-  const closes = state.log.filter(l => l.type === "close").slice(-15).reverse();
+  const closes = state.log.filter(l => l.type === "close" || l.type === "partial_close").slice(-15).reverse();
   setHtml($("history"), closes.length ? closes.map(l => `
-    <div class="history-row"><span>${l.reason === "liquidated" ? '<b class="liq-tag">強平</b>' : l.reason === "stop_loss" ? '<b class="stop-hist stop-tag sl">止損</b>' : l.reason === "take_profit" ? '<b class="stop-hist stop-tag tp">止盈</b>' : ""}#${l.id} ${l.pair} @ ${l.price.toFixed(digits(l.pair))}</span>
+    <div class="history-row"><span>${l.reason === "liquidated" ? '<b class="liq-tag">強平</b>' : l.reason === "stop_loss" ? '<b class="stop-hist stop-tag sl">止損</b>' : l.reason === "take_profit" ? '<b class="stop-hist stop-tag tp">止盈</b>' : ""}${l.type === "partial_close" ? "部分平倉 " : ""}#${l.id} ${l.pair} @ ${l.price.toFixed(digits(l.pair))}</span>
     <strong class="${signCls(l.pnl)}">${signedMoney(l.pnl)}</strong></div>`).join("")
     : '<div class="empty-state">還沒有結算紀錄</div>');
 }
@@ -554,6 +585,7 @@ function renderAll() {
   renderEquity();
   renderHistory();
   renderBank();
+  lab?.update();
 }
 
 function afterChange() { saveCurrent(); checkAccountAch(mode === "server" && settledPrices ? settledPrices : market.prices()); equityPts.push(E.equity(state, market.prices())); renderAll(); }
@@ -758,7 +790,7 @@ function bindRisk() {
 }
 
 function saveCurrent() {
-  if (mode === "guest") Store.save(state);
+  if (mode === "guest" && !guestRecoveryPending) Store.save(state,market);
   else if (mode === "battle") saveBattle(market.id, market.cursor(), state);
 }
 
@@ -872,7 +904,7 @@ function loop() {
   updateOnline();
   if (mode === "server") { if (catchingUp || Date.now() - lastPollAt >= SERVER_POLL_MS - 200) poll(); return; }
   if (mode === "battle") { if (battleAuto && !risk) nextBattleDay(); return; }
-  if (ui.paused || (risk && risk.auto)) return;
+  if (guestRecoveryPending || ui.paused || (risk && risk.auto)) return;
   const { prices, news: plain, event } = market.tick();
   const news = event || plain;
   E.accrueLoan(state, 1);
@@ -883,7 +915,7 @@ function loop() {
   if (equityPts.length > 500) equityPts.shift();
   trackLossTime(prices, { ms: 1500 });
   checkAccountAch(prices);
-  Store.save(state);
+  if (!guestRecoveryPending) Store.save(state,market);
   renderAll();
   checkRisk(prices);
   if (!$("newsCenter").classList.contains("hidden")) renderNewsCenter();
@@ -998,7 +1030,7 @@ function bind() {
   bindBattle();
   const toggle = (id, key) => { $(id).onclick = () => { ui[key] = !ui[key]; $(id).classList.toggle("active", ui[key]); renderChart(); }; };
   toggle("maBtn", "showMA"); toggle("newsMarkBtn", "showNews"); toggle("posLineBtn", "showPos");
-  $("pauseBtn").onclick = () => { ui.paused = !ui.paused; $("pauseBtn").textContent = ui.paused ? "繼續" : "暫停"; renderModeBadge(); };
+  $("pauseBtn").onclick = () => { if (guestRecoveryPending) { resolveGuestRecovery(); return; } ui.paused = !ui.paused; $("pauseBtn").textContent = ui.paused ? "繼續" : "暫停"; renderModeBadge(); };
   document.addEventListener("visibilitychange", () => { if (!document.hidden) { updateOnline(true); if (mode === "server") poll(); } });
   $("historyToggle").onclick = () => { ui.historyOpen = !ui.historyOpen; renderHistory(); };
   $("themeBtn").onclick = () => {
@@ -1142,8 +1174,9 @@ function bindAuth() {
     finally { $("authSubmit").disabled = false; }
   };
   $("newCodeBtn").onclick = async () => {
-    const pw = prompt("產生新的救援碼後，舊的會失效。請輸入密碼確認：");
-    if (!pw) return;
+    const owner = Cloud.user(), epoch = modeEpoch;
+    const pw = await askSecure({title:"產生新的救援碼",message:"產生後舊碼會立即失效。請輸入目前密碼確認。",password:true,confirmLabel:"產生救援碼"});
+    if (!pw || owner !== Cloud.user() || epoch !== modeEpoch) return;
     try { const code = await Cloud.newRecoveryCode(pw); $("authModal").classList.add("hidden"); await showRecoveryCode(code, "新的救援碼"); }
     catch (ex) { toast(ex.message, true); }
   };
@@ -1153,8 +1186,9 @@ function bindAuth() {
     switchToGuest("已登出。你的成績保存在伺服器，現在是訪客模式。");
   };
   $("deleteAccountBtn").onclick = async () => {
-    const pw = prompt("刪除後帳號與成績都無法復原。請輸入密碼確認：");
-    if (!pw) return;
+    const owner = Cloud.user(), epoch = modeEpoch;
+    const pw = await askSecure({title:"永久刪除帳號",message:"刪除後帳號、房間與成績都無法復原。請輸入目前密碼確認。",password:true,confirmLabel:"永久刪除"});
+    if (!pw || owner !== Cloud.user() || epoch !== modeEpoch) return;
     try { await Cloud.deleteAccount(pw); $("authModal").classList.add("hidden"); switchToGuest("帳號已刪除"); }
     catch (ex) { toast(ex.message, true); }
   };
@@ -1167,6 +1201,13 @@ bindAuth();
 renderAccountBtn();
 if (Cloud.enabled() && Cloud.user()) switchToServer(); else { enterGuest(); renderAll(); }
 updateOnline(true);
+lab = initLearningLab({
+  getContext: () => ({mode, username:Cloud.user(), state, prices:market.prices(), epoch:modeEpoch, pair:ui.pair, leverage:ui.leverage, execution, battleId:mode === "battle" ? market.id : null, refresh:poll}),
+  Cloud,E,kindOf,onToast:toast,
+  onApply: ({margin,sl,side}) => { ui.margin=margin; $("marginInput").value=margin; delete $("marginInput").dataset.maxOrder; $("slInput").value=sl; $("stopsBox").open=true; updateStopsBox(); renderAll(); $("orderPanel").scrollIntoView({block:"start"}); toast(`已套用${side>0?"做多":"做空"}風險計畫，請按對應方向送單`); },
+  onPartial: (id,fraction) => { const p=state.positions.find(p=>p.id===id); return p ? closePos(id,p.pair,fraction) : toast("持倉已不存在",true); },
+});
+lab.update();
 extras = initExtras({
   getContext: () => ({ mode, username: Cloud.user(), account: state, prices: market.prices(), progress, resets, catchingUp, equityPoints: equityPts.slice(), book }),
   refresh: async () => {

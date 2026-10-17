@@ -380,11 +380,61 @@ export function publicNews(item, step) {
   return { step: item.step, pair: item.pair, text: item.text, claimed: item.claimed, settled, reversed: settled ? item.reversed : null };
 }
 
-// 本機用的包裝（訪客模式、測試）。介面與舊版相同。
+// Checkpoints are complete private simulation state, not the public server view.
+// Restoring never warms up, adds instruments, or consumes random draws.
+export function restoreMarketState(snapshot) {
+  const fail = () => { throw new Error("Invalid market snapshot"); };
+  const finiteTree = value => {
+    if (typeof value === "number") return Number.isFinite(value);
+    if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+    if (Array.isArray(value)) return value.every(finiteTree);
+    return value && typeof value === "object" && Object.values(value).every(finiteTree);
+  };
+  if (!snapshot || typeof snapshot !== "object" || !finiteTree(snapshot)) fail();
+  const ms = JSON.parse(JSON.stringify(snapshot));
+  if (!Number.isSafeInteger(ms.step) || ms.step < 0 || !Number.isSafeInteger(ms.history) || ms.history < 1) fail();
+  if (ms.rngVersion !== undefined) {
+    if (ms.rngVersion !== "hmac-sha256-v1" || !validSecret(ms.secret)) fail();
+  } else if (!Number.isInteger(ms.r) || ms.r < -2147483648 || ms.r > 2147483647) fail();
+  const record = v => v && typeof v === "object" && !Array.isArray(v);
+  if (![ms.prices, ms.phase, ms.bias, ms.candles].every(record) || !Array.isArray(ms.news)) fail();
+  const keys = Object.keys(ms.prices);
+  if (!keys.length || keys.some(p => !Object.hasOwn(PAIRS, p))) fail();
+  for (const p of keys) {
+    if (!(ms.prices[p] > 0) || typeof ms.prices[p] !== "number" || typeof ms.phase[p] !== "number") fail();
+    const b = ms.bias[p];
+    if (!b || typeof b.v !== "number" || !Number.isInteger(b.left) || b.left < 0) fail();
+    if (!Array.isArray(ms.candles[p]) || ms.candles[p].length > ms.history) fail();
+    for (const c of ms.candles[p]) {
+      if (!c || !Number.isSafeInteger(c.t) || c.t < 0 || c.t > ms.step ||
+          ![c.o, c.h, c.l, c.c].every(v => typeof v === "number" && v > 0)) fail();
+    }
+  }
+  for (const n of ms.news) {
+    if (!n || !keys.includes(n.pair) || !Number.isSafeInteger(n.step) || n.step > ms.step || n.step < 0 || typeof n.text !== "string") fail();
+  }
+  if (ms.ev !== undefined) {
+    if (!Array.isArray(ms.ev)) fail();
+    for (const e of ms.ev) {
+      if (!e || !Number.isSafeInteger(e.step) || e.step < 0 || e.step > ms.step || !record(e.logs) ||
+          Object.entries(e.logs).some(([p, v]) => !keys.includes(p) || typeof v !== "number")) fail();
+    }
+  }
+  if (ms.etfStable !== undefined && ms.etfStable !== 1) fail();
+  return ms;
+}
+
+export function exportMarketState(state) {
+  return restoreMarketState(state); // validation + detached deep copy
+}
+
+// 本機用的包裝（訪客模式、測試）。既有介面保留。
 export function createMarket(seed = 20261015, opts = {}) {
-  const ms = createMarketState(seed, opts);
+  let ms = opts.state === undefined ? createMarketState(seed, opts) : restoreMarketState(opts.state);
   return {
-    state: ms,
+    get state() { return ms; },
+    exportState: () => exportMarketState(ms),
+    restoreState: snapshot => { ms = restoreMarketState(snapshot); return ms; },
     prices: () => ({ ...ms.prices }),
     get: (p) => ms.prices[p],
     pairs: () => statePairs(ms),

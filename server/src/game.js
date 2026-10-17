@@ -46,6 +46,8 @@ function closeFill(pos, mid, t) {
 function settleCarry(a, t) {
   for (const pos of a.positions) {
     if (pos.executionVersion !== EXECUTION_VERSION) continue;
+    // Preserve incomplete legacy cost basis even after collecting new carry.
+    if (!Number.isFinite(pos.carryPaid) || pos.carryPaid < 0) pos.carryUnknown = true;
     const from = pos.carryAt ?? pos.openedAt;
     const charge = carryCharge(pos, from, t);
     if (charge > 0) { a.cash -= charge; pos.carryPaid = (pos.carryPaid || 0) + charge; }
@@ -289,6 +291,30 @@ export function closeOrder(g, id, now, marketSecret, sentiment) {
   recordClose(g, pos, r.pnl, 'manual', now);
   trimAccount(g.account);
   return r.pnl;
+}
+// Fraction applies to the currently remaining exposure. CAS in withGame commits
+// account, proportional costs, progress and the receipt in one state write.
+export function closeOrderPartial(g, id, fraction, now, marketSecret, sentiment) {
+  requireCaughtUp(g, now);
+  if (typeof fraction !== 'number' || !Number.isFinite(fraction) || fraction <= 0 || fraction > 1)
+    throw new GameError('平倉比例必須大於 0 且不超過 1');
+  if (!Number.isSafeInteger(id)) throw new GameError('持倉編號無效');
+  const pos = g.account.positions.find(p => p.id === id);
+  if (!pos) throw new GameError('找不到持倉（可能已被平倉）');
+  const prices = accountPrices(g, marketSecret, [], sentiment);
+  settleCarry(g.account, now);
+  const portion = { ...pos, margin: pos.margin * fraction, notional: pos.notional * fraction };
+  if (pos.feePaid !== undefined) portion.feePaid = pos.feePaid * fraction;
+  if (pos.carryPaid !== undefined) portion.carryPaid = pos.carryPaid * fraction;
+  const fill = closeFill(portion, prices[pos.pair], now);
+  const r = E.closePositionPartial(g.account, id, fill, now, fraction);
+  if (!r.ok) throw new GameError(r.error);
+  recordClose(g, portion, r.pnl, 'manual', now);
+  trimAccount(g.account);
+  return { closed: id, partial: fraction < 1, fraction, pnl: r.pnl,
+    netPnl: portion.carryUnknown || !Number.isFinite(portion.feePaid) ? null : r.netPnl, closedMargin: portion.margin, closedNotional: portion.notional,
+    closedEntryFee: portion.feePaid ?? null, closedCarryPaid: portion.carryPaid ?? (portion.executionVersion === undefined ? 0 : null),
+    remaining: r.remaining ? { ...r.remaining } : null };
 }
 export function borrowLoan(g, amount, now, marketSecret, sentiment) {
   requireCaughtUp(g, now);
