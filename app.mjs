@@ -1,3 +1,4 @@
+import { formatTradeTime } from './trade-time.mjs?v=20261017time1';
 import { initLearningLab, askSecure, downloadText } from './learning-lab.mjs';
 import { estimatedFriction, closeMidThreshold } from './risk-budget.mjs';
 import { initExtras } from "./extras.mjs?v=20261017lab1";
@@ -505,7 +506,7 @@ function renderHistory() {
   if (!ui.historyOpen) return;
   const closes = state.log.filter(l => l.type === "close" || l.type === "partial_close").slice(-15).reverse();
   setHtml($("history"), closes.length ? closes.map(l => `
-    <div class="history-row"><span>${l.reason === "liquidated" ? '<b class="liq-tag">強平</b>' : l.reason === "stop_loss" ? '<b class="stop-hist stop-tag sl">止損</b>' : l.reason === "take_profit" ? '<b class="stop-hist stop-tag tp">止盈</b>' : ""}${l.type === "partial_close" ? "部分平倉 " : ""}#${l.id} ${l.pair} @ ${l.price.toFixed(digits(l.pair))}</span>
+    <div class="history-row"><span>${l.reason === "liquidated" ? '<b class="liq-tag">強平</b>' : l.reason === "stop_loss" ? '<b class="stop-hist stop-tag sl">止損</b>' : l.reason === "take_profit" ? '<b class="stop-hist stop-tag tp">止盈</b>' : ""}${l.type === "partial_close" ? "部分平倉 " : ""}#${l.id} ${l.pair} @ ${l.price.toFixed(digits(l.pair))}<small class="history-time" title="結算時間（裝置本地時區）">${formatTradeTime(l.t)}</small></span>
     <strong class="${signCls(l.pnl)}">${signedMoney(l.pnl)}</strong></div>`).join("")
     : '<div class="empty-state">還沒有結算紀錄</div>');
 }
