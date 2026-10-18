@@ -4,7 +4,7 @@ import { getAvatar, saveAvatar, removeAvatar, avatarImage, DEFAULT_AVATAR_URL } 
 function defaultAvatarImg() {
   const img = document.createElement('img'); img.alt = '預設分享頭像'; img.src = DEFAULT_AVATAR_URL; return img;
 }
-import { drawShareCard } from './share-card.mjs?v=20261017lab1';
+import { drawShareCard } from './share-card.mjs?v=20261018numbers1';
 import makeQR from './qr-code.mjs?v=20261017lab1';
 
 const qr = makeQR(0, 'M');

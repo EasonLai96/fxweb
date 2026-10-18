@@ -1,13 +1,14 @@
+import { compactAmount, compactPercent } from './number-format.mjs?v=20261018numbers1';
 import { formatTradeTime } from './trade-time.mjs?v=20261017time1';
 import { initLearningLab, askSecure, downloadText } from './learning-lab.mjs';
 import { estimatedFriction, closeMidThreshold } from './risk-budget.mjs';
-import { initExtras } from "./extras.mjs?v=20261017lab1";
-import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261017lab1";
+import { initExtras } from "./extras.mjs?v=20261018numbers1";
+import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261018numbers1";
 import { initRooms } from "./rooms-ui.mjs?v=20261017lab1";
 import * as E from "./engine.mjs?v=20261017lab1";
 import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261017lab1";
 import * as Store from "./store.mjs?v=20261017lab1";
-import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261017lab1";
+import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261018numbers1";
 import * as Cloud from "./cloud.mjs?v=20261017lab1";
 import { createRemoteMarket } from "./remote.mjs?v=20261017lab1";
 import { createAchievementBook } from "./achievements.mjs?v=20261017lab1";
@@ -127,18 +128,11 @@ let newsTimer = 0, toastTimer = 0, lastNewsStep = -1;
 
 const $ = id => document.getElementById(id);
 const digits = priceDigits;
-// 金額 ≥ 1 億改用中文大數單位簡寫，避免天文數字撐爆版面。
-const BIG_UNITS = [[1e16, "京"], [1e12, "兆"], [1e8, "億"]];
-function absMoney(v) {
-  const a = Math.abs(v);
-  if (!Number.isFinite(a)) return "∞";
-  if (a >= 1e20) return a.toExponential(2).replace("e+", "e");
-  for (const [n, u] of BIG_UNITS) if (a >= n) return (a / n).toLocaleString("en-US", { maximumFractionDigits: 2 }) + " " + u;
-  return a.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
+// 金額與報酬率共用中文大數單位，避免出現難讀的 e22。
+const absMoney = compactAmount;
 const money = v => (v < 0 ? "-$" : "$") + absMoney(v);
 const signedMoney = v => (v >= 0 ? "+" : "-") + "$" + absMoney(v);
-const pct = v => Math.abs(v) >= 1e4 ? `${v >= 0 ? "+" : "-"}${absMoney(Math.abs(v * 100)).replace(/\.00$/, "")}%` : `${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`;
+const pct = compactPercent;
 const signCls = v => (v > 0 ? "positive" : v < 0 ? "negative" : "");
 const spaced = p => p.replace("/", " / ");
 // 價格旁的計價單位：ETF 標示 NT$ 或 US$，外匯維持原樣（報價本身就是匯率）。
