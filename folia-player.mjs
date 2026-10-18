@@ -11,7 +11,7 @@ export function initFoliaPlayer() {
   root.innerHTML = `<button class="folia-launch" type="button" aria-expanded="false" aria-controls="foliaPanel"><span aria-hidden="true">♫</span><span>音樂 <small>Folia</small></span></button>
     <section id="foliaPanel" class="folia-panel" hidden aria-label="俱樂部音樂面板">
       <header><div><small>CLUB SOUNDTRACK</small><strong>音樂休息室 <span>讓交易有自己的節奏。</span></strong></div><button class="folia-fold" type="button" aria-label="收合音樂面板">−</button></header>
-      <div class="club-featured"><small>DEFAULT TRACK / 預設歌曲</small><h3>真英雄 <span>姜姜</span></h3><p>若是真英雄怎會怕 · 非 DJ 版</p><button class="featured-play" type="button">載入官方試聽 ▶</button><a href="https://music.apple.com/tw/album/1842193699?i=1842193702" target="_blank" rel="noopener noreferrer">Apple Music 完整歌曲 ↗</a><p class="featured-note">免登入可用性與試聽長度由平台決定；不是免費整首。點擊才載入，不自動播放。</p><div class="featured-frame" hidden></div></div>
+      <div class="club-featured"><small>DEFAULT TRACK / 預設歌曲</small><h3>真英雄 <span>姜姜</span></h3><p>DJ 循環歌單版 · 完整公開影片，非 90 秒試聽</p><button class="featured-play" type="button">載入完整歌曲 ▶</button><a href="https://www.bilibili.com/video/BV1cwDbBGEN3/" target="_blank" rel="noopener noreferrer">B 站原影片 ↗</a><p class="featured-note">由 B 站官方播放器提供，點擊才載入。可收合畫面聽歌，但仍可能下載影片，並非純音訊省流量模式；平台可用性依地區與政策變動。</p><div class="featured-frame" hidden></div></div>
       <div class="club-radio"><label for="clubStation">免登入電台</label><select id="clubStation">${STATIONS.map(s => `<option value="${s.id}">${s.name}</option>`).join('')}</select>
         <div class="radio-controls"><button class="radio-play" type="button">播放電台</button><label>音量 <input class="radio-volume" type="range" min="0" max="1" step="0.05" value="0.35" aria-label="電台音量"></label></div>
         <p class="radio-status" role="status" aria-live="polite">按播放才連線，不需登入。</p><small>音源由 <a href="https://somafm.com/" target="_blank" rel="noopener noreferrer">SomaFM</a> 提供，瀏覽器直接串流，本站不轉送音訊。128 kbps 約 58 MB／小時；行動網路請留意流量。第三方電台可能因地區或網路暫停供應。</small>
@@ -41,13 +41,13 @@ export function initFoliaPlayer() {
   root.querySelector('.featured-play').onclick = () => {
     stopRadio();
     featured = document.createElement('iframe');
-    featured.title = '真英雄 — 姜姜，Apple Music 官方試聽';
-    featured.src = 'https://embed.music.apple.com/tw/album/1842193699?i=1842193702&app=music';
+    featured.title = '真英雄 — 姜姜，B站 DJ循環歌單完整影片';
+    featured.src = 'https://player.bilibili.com/player.html?bvid=BV1cwDbBGEN3&p=1&autoplay=0';
     featured.allow = 'autoplay *; encrypted-media *; fullscreen *';
     featured.referrerPolicy = 'no-referrer';
     featuredWrap.replaceChildren(featured); featuredWrap.hidden = false;
     root.querySelector('.featured-play').hidden = true;
-    status.textContent = '官方試聽已載入 · 請在播放器內按播放';
+    status.textContent = 'B站播放器已載入 · 請按播放；無法使用時可開原影片';
   };
   const stopRadio = () => {
     generation++; audio.pause(); audio.removeAttribute('src'); audio.load();
