@@ -122,7 +122,7 @@ function leaveBattle() {
   toast("已回到即時行情，戰役進度保存在這台裝置");
 }
 
-const ui = { pair: "EUR/USD", margin: 500, leverage: 5, paused: false, showMA: true, showNews: true, showPos: true, historyOpen: false };
+const ui = { pair: "EUR/USD", margin: 500, leverage: 5, paused: false, showMA: true, showNews: true, showPos: true, historyOpen: true };
 const equityPts = [];       // 淨值曲線：guest 每 tick 一點；server 用伺服器每 10 根記一次的紀錄
 let newsTimer = 0, toastTimer = 0, lastNewsStep = -1;
 
@@ -199,7 +199,10 @@ function renderAccount(prices) {
   const m = mode === "server" && settledPrices ? E.metrics(state, settledPrices) : E.metrics(state, prices);
   const floating = m.equity - state.cash;
   const ret = m.equity / state.startingCash - 1;
-  $("equity").textContent = money(m.equity);
+  const equityText = money(m.equity);
+  const unitAt = equityText.lastIndexOf(" ");
+  setHtml($("equity"), unitAt > 0 && !equityText.includes("×")
+    ? `${esc(equityText.slice(0, unitAt))}<small class="money-unit">${esc(equityText.slice(unitAt + 1))}</small>` : esc(equityText));
   $("retPct").textContent = pct(ret); $("retPct").className = signCls(ret);
   $("free").textContent = money(m.freeMargin);
   $("floating").textContent = signedMoney(floating); $("floating").className = signCls(floating);
@@ -491,6 +494,7 @@ function renderPositions(prices) {
 
 /* ---------- 淨值、紀錄、新聞 ---------- */
 function renderEquity() {
+  if ($("portfolioSpark")) drawSpark($("portfolioSpark"), equityPts.slice(-80), cssVar("--accent-deep"));
   drawEquity($("equityChart"), equityPts, state.startingCash, { up: cssVar("--up"), down: cssVar("--down"), muted: cssVar("--text-muted"), text: cssVar("--text-deep") });
 }
 
@@ -498,11 +502,17 @@ function renderHistory() {
   $("historyToggle").textContent = ui.historyOpen ? "收起紀錄" : "展開紀錄";
   $("history").classList.toggle("hidden", !ui.historyOpen);
   if (!ui.historyOpen) return;
+  const openRecords = new Set([...$("history").querySelectorAll('.trade-record[open]')].map(n => n.dataset.record));
   const closes = state.log.filter(l => l.type === "close" || l.type === "partial_close").slice(-15).reverse();
-  setHtml($("history"), closes.length ? closes.map(l => `
-    <div class="history-row"><span>${l.reason === "liquidated" ? '<b class="liq-tag">強平</b>' : l.reason === "stop_loss" ? '<b class="stop-hist stop-tag sl">止損</b>' : l.reason === "take_profit" ? '<b class="stop-hist stop-tag tp">止盈</b>' : ""}${l.type === "partial_close" ? "部分平倉 " : ""}#${l.id} ${l.pair} @ ${l.price.toFixed(digits(l.pair))}<small class="history-time" title="結算時間（裝置本地時區）">${formatTradeTime(l.t)}</small></span>
-    <strong class="${signCls(l.pnl)}">${signedMoney(l.pnl)}</strong></div>`).join("")
-    : '<div class="empty-state">還沒有結算紀錄</div>');
+  setHtml($("history"), closes.length ? closes.map(l => {
+    const reason = l.type === "partial_close" ? "部分平倉" : ({ liquidated: "強制平倉", stop_loss: "止損", take_profit: "止盈", expired: "到期結算" }[l.reason] || "手動平倉");
+    const recordKey = `${l.id}:${l.t}:${l.type}`;
+    return `<details class="trade-record" data-record="${esc(recordKey)}"${openRecords.has(recordKey) ? ' open' : ''}><summary>
+      <span class="trade-symbol" aria-hidden="true">${esc(l.pair.replace('/','').slice(0, 2))}</span>
+      <span class="trade-record-main"><b>${esc(l.pair)}</b><span class="trade-reason ${l.reason === 'liquidated' ? 'negative' : ''}">${reason}</span><small class="history-time" title="結算時間（裝置本地時區）">${formatTradeTime(l.t)}</small></span>
+      <span class="trade-result"><strong class="${signCls(l.pnl)}">${signedMoney(l.pnl)}</strong><small>交易損益 <span aria-hidden="true">↗</span></small></span>
+    </summary><div class="trade-record-detail"><span>交易編號 <b>#${l.id}</b></span><span>結算價格 <b>${l.price.toFixed(digits(l.pair))}</b></span><span>損益為交易價差；費用另計</span></div></details>`;
+  }).join("") : '<div class="empty-state"><div class="empty-icon">↗</div>你的交易故事，從第一筆結算開始。</div>');
 }
 
 const pctTxt = m => `${m > 0 ? "+" : ""}${(m * 100).toFixed(0)}%`;
