@@ -11,6 +11,7 @@ export function initFoliaPlayer() {
   root.innerHTML = `<button class="folia-launch" type="button" aria-expanded="false" aria-controls="foliaPanel"><span aria-hidden="true">♫</span><span>音樂 <small>Folia</small></span></button>
     <section id="foliaPanel" class="folia-panel" hidden aria-label="俱樂部音樂面板">
       <header><div><small>CLUB SOUNDTRACK</small><strong>音樂休息室 <span>讓交易有自己的節奏。</span></strong></div><button class="folia-fold" type="button" aria-label="收合音樂面板">−</button></header>
+      <div class="club-featured"><small>DEFAULT TRACK / 預設歌曲</small><h3>真英雄 <span>姜姜</span></h3><p>若是真英雄怎會怕 · 非 DJ 版</p><button class="featured-play" type="button">載入官方試聽 ▶</button><a href="https://music.apple.com/tw/album/1842193699?i=1842193702" target="_blank" rel="noopener noreferrer">Apple Music 完整歌曲 ↗</a><p class="featured-note">免登入可用性與試聽長度由平台決定；不是免費整首。點擊才載入，不自動播放。</p><div class="featured-frame" hidden></div></div>
       <div class="club-radio"><label for="clubStation">免登入電台</label><select id="clubStation">${STATIONS.map(s => `<option value="${s.id}">${s.name}</option>`).join('')}</select>
         <div class="radio-controls"><button class="radio-play" type="button">播放電台</button><label>音量 <input class="radio-volume" type="range" min="0" max="1" step="0.05" value="0.35" aria-label="電台音量"></label></div>
         <p class="radio-status" role="status" aria-live="polite">按播放才連線，不需登入。</p><small>音源由 <a href="https://somafm.com/" target="_blank" rel="noopener noreferrer">SomaFM</a> 提供，瀏覽器直接串流，本站不轉送音訊。128 kbps 約 58 MB／小時；行動網路請留意流量。第三方電台可能因地區或網路暫停供應。</small>
@@ -34,12 +35,26 @@ export function initFoliaPlayer() {
   } catch { /* preference storage is optional */ }
   volume.value = audio.volume;
   const persist = () => { try { localStorage.setItem('fxweb.music.v1', JSON.stringify({ volume: audio.volume, station: select.value })); } catch {} };
-  let frame = null, generation = 0;
+  let frame = null, featured = null, generation = 0;
+  const featuredWrap = root.querySelector('.featured-frame');
+  const unloadFeatured = () => { featured?.remove(); featured = null; featuredWrap.hidden = true; root.querySelector('.featured-play').hidden = false; };
+  root.querySelector('.featured-play').onclick = () => {
+    stopRadio();
+    featured = document.createElement('iframe');
+    featured.title = '真英雄 — 姜姜，Apple Music 官方試聽';
+    featured.src = 'https://embed.music.apple.com/tw/album/1842193699?i=1842193702&app=music';
+    featured.allow = 'autoplay *; encrypted-media *; fullscreen *';
+    featured.referrerPolicy = 'no-referrer';
+    featuredWrap.replaceChildren(featured); featuredWrap.hidden = false;
+    root.querySelector('.featured-play').hidden = true;
+    status.textContent = '官方試聽已載入 · 請在播放器內按播放';
+  };
   const stopRadio = () => {
     generation++; audio.pause(); audio.removeAttribute('src'); audio.load();
     play.textContent = '播放電台'; root.classList.remove('is-playing');
   };
   const startRadio = async () => {
+    unloadFeatured();
     stopRadio();
     const epoch = generation;
     audio.src = STATIONS.find(s => s.id === select.value).url;
@@ -63,6 +78,7 @@ export function initFoliaPlayer() {
   root.addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); toggle(false); } });
   root.querySelector('.folia-start').onclick = () => {
     if (frame) return;
+    unloadFeatured();
     stopRadio(); radioStatus.textContent = '電台已停止，避免與 Folia 同時播放。';
     frame = document.createElement('iframe'); frame.title = 'Folia 獨立音樂播放器'; frame.referrerPolicy = 'no-referrer';
     frame.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-popups allow-downloads');
@@ -70,9 +86,11 @@ export function initFoliaPlayer() {
     frame.onload = () => { status.textContent = 'Folia 已開啟 · 收合不卸載'; };
     wrap.append(frame); wrap.hidden = false; intro.hidden = true;
     root.querySelector('.club-radio').hidden = true;
+    root.querySelector('.club-featured').hidden = true;
     status.textContent = '載入中；無法顯示時請獨立開啟'; root.classList.add('is-loaded');
   };
   root.querySelector('.folia-stop').onclick = () => {
+    unloadFeatured(); root.querySelector('.club-featured').hidden = false;
     stopRadio(); radioStatus.textContent = '已停止串流';
     if (frame) { frame.onload = null; frame.remove(); frame = null; }
     wrap.hidden = true; intro.hidden = false; root.querySelector('.club-radio').hidden = false;
