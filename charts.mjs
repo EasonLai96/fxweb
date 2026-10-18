@@ -207,7 +207,7 @@ export function drawEquity(canvas, points, startValue, { up, down, muted, text }
 }
 
 // 圖上標籤只有 ~50px 寬：超過 6 位數就用 萬 / 億 / 兆 / 京 簡寫。
-import { compactAmount } from './number-format.mjs?v=20261018numbers1';
+import { compactAmount } from './number-format.mjs?v=20261019bignum1';
 function shortNum(v) {
   const a = Math.abs(v), s = v < 0 ? "-" : "";
   if (!Number.isFinite(a)) return "—";

@@ -11,7 +11,7 @@ const el=(tag,cls='',text)=>{const n=document.createElement(tag);n.className=cls
 const btn=(text,fn,cls='')=>{const n=el('button',`fx-leader-button ${cls}`,text);n.type='button';n.addEventListener('click',fn);return n};
 const finite=n=>typeof n==='number'&&Number.isFinite(n);
 const date=x=>{const n=x?new Date(x).getTime():NaN;return Number.isFinite(n)?new Date(n).toLocaleString('zh-TW',{hour12:false}):'未提供'};
-import { compactAmount, compactPercent } from './number-format.mjs?v=20261018numbers1';
+import { compactAmount, compactPercent } from './number-format.mjs?v=20261019bignum1';
 const pct=compactPercent;
 const money=x=>finite(x)?`${x<0?'-':''}$${compactAmount(x)}`:'—';
 const count=x=>Number.isInteger(x)&&x>=0?x.toLocaleString('zh-TW'):'—';

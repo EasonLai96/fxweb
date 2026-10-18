@@ -14,5 +14,11 @@ test('報酬率不再顯示 e20%',()=>{
  assert.equal(compactPercent(-0.1234),'-12.34%');
  assert.equal(compactPercent(Infinity),'—');
  assert.equal(compactAmount(NaN),'—');
- assert.equal(compactAmount(1e60),'1.00 × 10^60');
+ for (const [n,unit] of [[1e52,'恆河沙'],[1e56,'阿僧祇'],[1e60,'那由他'],[1e64,'不可思議'],[1e68,'無量大數']]) {
+   assert.equal(compactAmount(n),`1 ${unit}`);
+   assert.equal(compactPercent(n / 100),`+1 ${unit}%`);
+ }
+ assert.equal(compactAmount(9.999999e67),'1 無量大數');
+ assert.equal(compactAmount(1.2345e70),'123.45 無量大數');
+ assert.equal(compactAmount(1e72),'1.00 × 10^72');
 });

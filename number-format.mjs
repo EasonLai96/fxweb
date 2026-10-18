@@ -1,9 +1,9 @@
 // 顯示用簡寫，不改變帳戶的數值或計算精度。
-const UNITS = [[1e48,'極'],[1e44,'載'],[1e40,'正'],[1e36,'澗'],[1e32,'溝'],[1e28,'穰'],[1e24,'秭'],[1e20,'垓'],[1e16,'京'],[1e12,'兆'],[1e8,'億']];
+const UNITS = [[1e68,'無量大數'],[1e64,'不可思議'],[1e60,'那由他'],[1e56,'阿僧祇'],[1e52,'恆河沙'],[1e48,'極'],[1e44,'載'],[1e40,'正'],[1e36,'澗'],[1e32,'溝'],[1e28,'穰'],[1e24,'秭'],[1e20,'垓'],[1e16,'京'],[1e12,'兆'],[1e8,'億']];
 export function compactAmount(value) {
   const a = Math.abs(value);
   if (!Number.isFinite(a)) return '—';
-  if (a >= 1e52) {
+  if (a >= 1e72) {
     const [mantissa, exponent] = a.toExponential(2).split('e');
     return `${mantissa} × 10^${Number(exponent)}`;
   }

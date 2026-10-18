@@ -5,7 +5,7 @@ import { equity } from './engine.mjs?v=20261017lab1';
 // For server callers, the raw game.account.eq is also accepted when supplied as account.eq.
 const SITE = 'https://easonlai96.github.io/fxweb/';
 const finite = n => typeof n === 'number' && Number.isFinite(n);
-import { compactAmount } from './number-format.mjs?v=20261018numbers1';
+import { compactAmount } from './number-format.mjs?v=20261019bignum1';
 const absAmt = compactAmount;
 const fmt = n => finite(n) ? `${n < 0 ? '-' : ''}$${absAmt(Math.abs(n))}` : '—';
 const signed = n => finite(n) ? `${n >= 0 ? '+' : '-'}$${absAmt(Math.abs(n))}` : '—';

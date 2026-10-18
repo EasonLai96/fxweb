@@ -1,14 +1,14 @@
-import { compactAmount, compactPercent } from './number-format.mjs?v=20261018numbers1';
+import { compactAmount, compactPercent } from './number-format.mjs?v=20261019bignum1';
 import { formatTradeTime } from './trade-time.mjs?v=20261017time1';
 import { initLearningLab, askSecure, downloadText } from './learning-lab.mjs';
 import { estimatedFriction, closeMidThreshold } from './risk-budget.mjs';
-import { initExtras } from "./extras.mjs?v=20261018numbers1";
-import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261018numbers1";
+import { initExtras } from "./extras.mjs?v=20261019bignum1";
+import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261019bignum1";
 import { initRooms } from "./rooms-ui.mjs?v=20261017lab1";
 import * as E from "./engine.mjs?v=20261018history1";
 import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261017lab1";
 import * as Store from "./store.mjs?v=20261017lab1";
-import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261018numbers1";
+import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261019bignum1";
 import * as Cloud from "./cloud.mjs?v=20261017lab1";
 import { createRemoteMarket } from "./remote.mjs?v=20261017lab1";
 import { createAchievementBook } from "./achievements.mjs?v=20261017lab1";
