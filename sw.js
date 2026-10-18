@@ -2,7 +2,7 @@
 // · 只處理「同網域的 GET」靜態檔；API 在另一個網域（workers.dev），完全不經過這裡，永遠走網路。
 // · 一律「網路優先」：有網路就拿最新版並順手更新快取，沒網路才用快取 —— 玩家不會卡在舊版前端。
 // · 換版時改 VERSION，舊快取會在 activate 時清掉。
-const VERSION = "fxweb-20261018club1";
+const VERSION = "fxweb-20261018folia1";
 const SHELL = ["./", "./index.html", "./manifest.webmanifest", "./assets/icon-192.png"];
 
 self.addEventListener("install", e => {
