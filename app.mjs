@@ -5,7 +5,7 @@ import { estimatedFriction, closeMidThreshold } from './risk-budget.mjs';
 import { initExtras } from "./extras.mjs?v=20261018numbers1";
 import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261018numbers1";
 import { initRooms } from "./rooms-ui.mjs?v=20261017lab1";
-import * as E from "./engine.mjs?v=20261017lab1";
+import * as E from "./engine.mjs?v=20261018history1";
 import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261017lab1";
 import * as Store from "./store.mjs?v=20261017lab1";
 import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261018numbers1";
@@ -506,10 +506,12 @@ function renderHistory() {
   const closes = state.log.filter(l => l.type === "close" || l.type === "partial_close").slice(-15).reverse();
   setHtml($("history"), closes.length ? closes.map(l => {
     const reason = l.type === "partial_close" ? "部分平倉" : ({ liquidated: "強制平倉", stop_loss: "止損", take_profit: "止盈", expired: "到期結算" }[l.reason] || "手動平倉");
+    const side = l.side ?? state.log.find(o => o.type === 'open' && o.id === l.id && o.pair === l.pair)?.side;
+    const direction = side === 1 ? '做多' : side === -1 ? '做空' : '方向未記錄';
     const recordKey = `${l.id}:${l.t}:${l.type}`;
     return `<details class="trade-record" data-record="${esc(recordKey)}"${openRecords.has(recordKey) ? ' open' : ''}><summary>
       <span class="trade-symbol" aria-hidden="true">${esc(l.pair.replace('/','').slice(0, 2))}</span>
-      <span class="trade-record-main"><b>${esc(l.pair)}</b><span class="trade-reason ${l.reason === 'liquidated' ? 'negative' : ''}">${reason}</span><small class="history-time" title="結算時間（裝置本地時區）">${formatTradeTime(l.t)}</small></span>
+      <span class="trade-record-main"><b>${esc(l.pair)}</b><span class="trade-direction ${side === 1 ? 'positive' : side === -1 ? 'negative' : ''}">${direction}</span><span class="trade-reason ${l.reason === 'liquidated' ? 'negative' : ''}">${reason}</span><small class="history-time" title="結算時間（裝置本地時區）">${formatTradeTime(l.t)}</small></span>
       <span class="trade-result"><strong class="${signCls(l.pnl)}">${signedMoney(l.pnl)}</strong><small>交易損益 <span aria-hidden="true">↗</span></small></span>
     </summary><div class="trade-record-detail"><span>交易編號 <b>#${l.id}</b></span><span>結算價格 <b>${l.price.toFixed(digits(l.pair))}</b></span><span>損益為交易價差；費用另計</span></div></details>`;
   }).join("") : '<div class="empty-state"><div class="empty-icon">↗</div>你的交易故事，從第一筆結算開始。</div>');
