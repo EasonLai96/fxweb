@@ -26,6 +26,21 @@ const protocol = extra => ({ receiptProtocolVersion: 1, serverTime: Date.now(),
   retention: { maxReceipts: 128, bounded: true }, ...extra });
 const receiptKey = "fxweb.receipts.v1:alice";
 
+test("same-session same-cursor concurrent game reads deduplicate; completed reads refresh", async () => {
+  let release;
+  const {cloud,calls}=await fixture(()=>new Promise(resolve=>{release=resolve;}));
+  const first=cloud.game.state(4),second=cloud.game.state(4);
+  assert.equal(first,second); assert.equal(calls.length,1);
+  release(json({step:6})); await first;
+  const third=cloud.game.state(4); assert.equal(calls.length,2);
+  release(json({step:8})); assert.equal((await third).step,8);
+});
+test("platform HTML 429 exposes Retry-After and never retries a mutation", async () => {
+  const {cloud,calls}=await fixture(()=>new Response('Cloudflare temporarily rate limited',{status:429,headers:{'content-type':'text/html','retry-after':'45'}}));
+  await assert.rejects(cloud.game.borrow(10,0),e=>e.status===429&&e.retryAfterMs===300000&&e.body.outcomeUnknown);
+  assert.equal(calls.length,1); assert.equal(cloud.listReceipts()[0].status,'unknown');
+});
+
 test("persists complete wire body before fetch; partial close and success", async () => {
   const { cloud, values } = await fixture((call, storage) => {
     const [saved] = JSON.parse(storage.get(receiptKey));

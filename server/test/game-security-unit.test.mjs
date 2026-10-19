@@ -46,10 +46,11 @@ test('JSON checkpoints reproduce prices, news, equity and liquidation times rega
   g.account.positions[0].entry *= 1.2;
   const a=clone(g),b=clone(g),end=start+550*TICK_MS+721;
   const one=advance(a,end),events=[];
+  while(one.pendingSteps>0){const more=advance(a,end);one.events.push(...more.events);one.pendingSteps=more.pendingSteps;one.steps+=more.steps;}
   for(let i=1;i<=550;i++){events.push(...advance(b,start+i*TICK_MS+(i%7)*41).events);b.market=clone(b.market);}
   assert.deepEqual(b,a);assert.deepEqual(events,one.events);
   assert.ok(one.events.some(e=>e.type==='liquidated'));
-  const c=clone(g);assert.deepEqual(advance(c,end),one);assert.deepEqual(c,a);
+  const c=clone(g),combined=advance(c,end);while(combined.pendingSteps>0){const more=advance(c,end);combined.events.push(...more.events);combined.pendingSteps=more.pendingSteps;combined.steps+=more.steps;}assert.deepEqual(combined,one);assert.deepEqual(c,a);
 });
 test('600 tick batch retains all offline risk and fractional time; stale-price trades rejected', () => {
   const a=fixture(),b=clone(a),end=start+(MAX_CATCHUP*2+3)*TICK_MS+777;

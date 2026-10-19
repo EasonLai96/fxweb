@@ -11,7 +11,7 @@ import { presence, prunePresence } from "./presence.js";
 
 import { createRoom, joinRoom, leaveRoom, myRooms, roomBoard, netScore } from "./rooms.js";
 import { netWorth } from "../../engine.mjs";
-import { newGame, advance, openOrder, closeOrder, resetGame, borrowLoan, repayLoan, addPositionMargin, refuseHelp, setPositionStops, closeOrderPartial, view, GameError, PERSIST_EVERY, ensureSecureGame, ensureMarketMode } from "./game.js";
+import { newGame, advance, openOrder, closeOrder, resetGame, borrowLoan, repayLoan, addPositionMargin, refuseHelp, setPositionStops, closeOrderPartial, view, GameError, PERSIST_EVERY, MAX_CATCHUP, ensureSecureGame, ensureMarketMode } from "./game.js";
 
 const PBKDF2_ITER = 100000;
 const SESSION_DAYS = 30;
@@ -291,6 +291,10 @@ function serverPrices(g, secret, sentiment) {
   const at = sharedPricer(secret, sentiment), held = [...new Set(g.account.positions.map(p => p.pair))];
   return Object.fromEntries(held.map(pair => [pair, at(g.cursor, pair)]));
 }
+// Pure read checkpoints only. Every request rechecks durable state/version;
+// mutations never trust a speculative checkpoint and retain CAS settlement.
+const readCheckpoints = new WeakMap();
+function checkpoints(db) { let m=readCheckpoints.get(db); if(!m){m=new Map();readCheckpoints.set(db,m);}return m; }
 async function withGame(env, userId, mutate, request = null) {
   const secret = sharedSecret(env);
   const head = absoluteTick(now());
@@ -303,7 +307,7 @@ async function withGame(env, userId, mutate, request = null) {
     if (row) { g = JSON.parse(row.state); version = row.version; }
     else g = newGame(t, secret);
     if (g.marketMode === 'shared' && g.account.positions.length && g.cursor < head - 180) {
-      const older = await loadSnapshots(env, g.cursor, Math.min(head, g.cursor + 601));
+      const older = await loadSnapshots(env, g.cursor, Math.min(head, g.cursor + MAX_CATCHUP + 1));
       for (const [bucket, counts] of older) sentiment.set(bucket, counts);
     }
     const progressUpgraded = ensureProgress(g, t);
@@ -315,6 +319,8 @@ async function withGame(env, userId, mutate, request = null) {
     if (previous && previous.fingerprint !== request.fingerprint)
       throw new HttpError(409, "request_conflict", "requestId 已用於不同操作");
     const before = g.marketMode === 'shared' ? g.cursor : g.market.step;
+    const cache = checkpoints(env.DB), cached = !mutate && row && cache.get(userId);
+    if (cached && cached.version === version && cached.state === row.state && cached.secret === secret && cached.cursor <= head && head - cached.cursor < MAX_CATCHUP && !upgraded) g = structuredClone(cached.g);
     const adv = advance(g, t, secret, sentiment);
     upgraded = ensureMarketMode(g, t, secret) || upgraded;
     const catchingUp = adv.pendingSteps > 0;
@@ -341,6 +347,10 @@ async function withGame(env, userId, mutate, request = null) {
       else ok = await env.DB.prepare("UPDATE games SET state = ?, version = version + 1, updated_at = ? WHERE user_id = ? AND version = ? RETURNING version").bind(text, t, userId, version).first();
       if (!ok) continue; // 被另一個請求搶先寫入，重新讀取再算一次
     }
+    if (!mutate && row && !changed && !adv.events.length && !upgraded && !catchingUp) {
+      if (cache.size >= 128 && !cache.has(userId)) cache.delete(cache.keys().next().value);
+      cache.set(userId,{version,state:row.state,secret,cursor:after,g:structuredClone(g)});
+    } else cache.delete(userId);
     if (mutate && !previous && catchingUp) throw new HttpError(409, "catching_up", "行情補算中，請稍後用相同 requestId 重試", { remainingTicks: adv.pendingSteps });
     return { g, events: adv.events, result, t, sentiment };
   }
@@ -556,7 +566,8 @@ export default {
   async scheduled(event, env) {
     await captureSentiment(env, event.scheduledTime);
     await prunePresence(env, event.scheduledTime);
-    await archiveSeason(env, previousSeason(event.scheduledTime).id, event.scheduledTime);
+    // Archive only hourly: an empty previous season otherwise scans all games every minute.
+    if (new Date(event.scheduledTime).getUTCMinutes() === 0) await archiveSeason(env, previousSeason(event.scheduledTime).id, event.scheduledTime);
     // cron 每分鐘跑；只在每小時的整點做一次較重的清理。
     if (new Date(event.scheduledTime).getUTCMinutes() === 0) await hourlyCleanup(env, event.scheduledTime);
   },

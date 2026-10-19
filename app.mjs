@@ -1,13 +1,15 @@
+import { compactAmount, compactPercent } from './number-format.mjs?v=20261019bignum1';
+import { formatTradeTime } from './trade-time.mjs?v=20261017time1';
 import { initLearningLab, askSecure, downloadText } from './learning-lab.mjs';
 import { estimatedFriction, closeMidThreshold } from './risk-budget.mjs';
-import { initExtras } from "./extras.mjs?v=20261017lab1";
-import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261017lab1";
+import { initExtras } from "./extras.mjs?v=20261019bignum1";
+import { initLeaderboard } from "./leaderboard-ui.mjs?v=20261019bignum1";
 import { initRooms } from "./rooms-ui.mjs?v=20261017lab1";
-import * as E from "./engine.mjs?v=20261017lab1";
+import * as E from "./engine.mjs?v=20261018history1";
 import { createMarket, PAIR_NAMES, NEWS_SETTLE, isEtf, isCrypto, kindOf, KIND_LABEL, priceDigits, currencyOf } from "./market.mjs?v=20261017lab1";
 import * as Store from "./store.mjs?v=20261017lab1";
-import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261017lab1";
-import * as Cloud from "./cloud.mjs?v=20261017lab1";
+import { drawCandles, drawSpark, drawEquity } from "./charts.mjs?v=20261019bignum1";
+import * as Cloud from "./cloud.mjs?v=20261019recovery1";
 import { createRemoteMarket } from "./remote.mjs?v=20261017lab1";
 import { createAchievementBook } from "./achievements.mjs?v=20261017lab1";
 import { BATTLES, createBattleMarket, loadBattleSave, saveBattle, dateAt } from "./battle.mjs?v=20261017lab1";
@@ -120,24 +122,17 @@ function leaveBattle() {
   toast("已回到即時行情，戰役進度保存在這台裝置");
 }
 
-const ui = { pair: "EUR/USD", margin: 500, leverage: 5, paused: false, showMA: true, showNews: true, showPos: true, historyOpen: false };
+const ui = { pair: "EUR/USD", margin: 500, leverage: 5, paused: false, showMA: true, showNews: true, showPos: true, historyOpen: true };
 const equityPts = [];       // 淨值曲線：guest 每 tick 一點；server 用伺服器每 10 根記一次的紀錄
 let newsTimer = 0, toastTimer = 0, lastNewsStep = -1;
 
 const $ = id => document.getElementById(id);
 const digits = priceDigits;
-// 金額 ≥ 1 億改用中文大數單位簡寫，避免天文數字撐爆版面。
-const BIG_UNITS = [[1e16, "京"], [1e12, "兆"], [1e8, "億"]];
-function absMoney(v) {
-  const a = Math.abs(v);
-  if (!Number.isFinite(a)) return "∞";
-  if (a >= 1e20) return a.toExponential(2).replace("e+", "e");
-  for (const [n, u] of BIG_UNITS) if (a >= n) return (a / n).toLocaleString("en-US", { maximumFractionDigits: 2 }) + " " + u;
-  return a.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
+// 金額與報酬率共用中文大數單位，避免出現難讀的 e22。
+const absMoney = compactAmount;
 const money = v => (v < 0 ? "-$" : "$") + absMoney(v);
 const signedMoney = v => (v >= 0 ? "+" : "-") + "$" + absMoney(v);
-const pct = v => Math.abs(v) >= 1e4 ? `${v >= 0 ? "+" : "-"}${absMoney(Math.abs(v * 100)).replace(/\.00$/, "")}%` : `${v >= 0 ? "+" : ""}${(v * 100).toFixed(2)}%`;
+const pct = compactPercent;
 const signCls = v => (v > 0 ? "positive" : v < 0 ? "negative" : "");
 const spaced = p => p.replace("/", " / ");
 // 價格旁的計價單位：ETF 標示 NT$ 或 US$，外匯維持原樣（報價本身就是匯率）。
@@ -204,7 +199,10 @@ function renderAccount(prices) {
   const m = mode === "server" && settledPrices ? E.metrics(state, settledPrices) : E.metrics(state, prices);
   const floating = m.equity - state.cash;
   const ret = m.equity / state.startingCash - 1;
-  $("equity").textContent = money(m.equity);
+  const equityText = money(m.equity);
+  const unitAt = equityText.lastIndexOf(" ");
+  setHtml($("equity"), unitAt > 0 && !equityText.includes("×")
+    ? `${esc(equityText.slice(0, unitAt))}<small class="money-unit">${esc(equityText.slice(unitAt + 1))}</small>` : esc(equityText));
   $("retPct").textContent = pct(ret); $("retPct").className = signCls(ret);
   $("free").textContent = money(m.freeMargin);
   $("floating").textContent = signedMoney(floating); $("floating").className = signCls(floating);
@@ -313,7 +311,7 @@ function renderOrder(prices, m) {
   const fake = side => E.liquidationPrice({ pair: p, side, leverage: lev, entry: price });
   $("liqPreview").textContent = `${fake(1).toFixed(digits(p))} / ${fake(-1).toFixed(digits(p))}`;
   const receiptLocked = mode === "server" && Cloud.receiptState().blocked;
-  const frozen = guestRecoveryPending || receiptLocked || m.frozen || mode === "server" && (serverMarketMode === "legacy" || catchingUp || Date.now() - lastOk > 9000);
+  const frozen = guestRecoveryPending || receiptLocked || m.frozen || mode === "server" && (serverMarketMode === "legacy" || catchingUp || Date.now() - lastOk >= SERVER_STALE_MS);
   $("longBtn").disabled = frozen; $("shortBtn").disabled = frozen;
 }
 
@@ -496,6 +494,7 @@ function renderPositions(prices) {
 
 /* ---------- 淨值、紀錄、新聞 ---------- */
 function renderEquity() {
+  if ($("portfolioSpark")) drawSpark($("portfolioSpark"), equityPts.slice(-80), cssVar("--accent-deep"));
   drawEquity($("equityChart"), equityPts, state.startingCash, { up: cssVar("--up"), down: cssVar("--down"), muted: cssVar("--text-muted"), text: cssVar("--text-deep") });
 }
 
@@ -503,11 +502,19 @@ function renderHistory() {
   $("historyToggle").textContent = ui.historyOpen ? "收起紀錄" : "展開紀錄";
   $("history").classList.toggle("hidden", !ui.historyOpen);
   if (!ui.historyOpen) return;
+  const openRecords = new Set([...$("history").querySelectorAll('.trade-record[open]')].map(n => n.dataset.record));
   const closes = state.log.filter(l => l.type === "close" || l.type === "partial_close").slice(-15).reverse();
-  setHtml($("history"), closes.length ? closes.map(l => `
-    <div class="history-row"><span>${l.reason === "liquidated" ? '<b class="liq-tag">強平</b>' : l.reason === "stop_loss" ? '<b class="stop-hist stop-tag sl">止損</b>' : l.reason === "take_profit" ? '<b class="stop-hist stop-tag tp">止盈</b>' : ""}${l.type === "partial_close" ? "部分平倉 " : ""}#${l.id} ${l.pair} @ ${l.price.toFixed(digits(l.pair))}</span>
-    <strong class="${signCls(l.pnl)}">${signedMoney(l.pnl)}</strong></div>`).join("")
-    : '<div class="empty-state">還沒有結算紀錄</div>');
+  setHtml($("history"), closes.length ? closes.map(l => {
+    const reason = l.type === "partial_close" ? "部分平倉" : ({ liquidated: "強制平倉", stop_loss: "止損", take_profit: "止盈", expired: "到期結算" }[l.reason] || "手動平倉");
+    const side = l.side ?? state.log.find(o => o.type === 'open' && o.id === l.id && o.pair === l.pair)?.side;
+    const direction = side === 1 ? '做多' : side === -1 ? '做空' : '方向未記錄';
+    const recordKey = `${l.id}:${l.t}:${l.type}`;
+    return `<details class="trade-record" data-record="${esc(recordKey)}"${openRecords.has(recordKey) ? ' open' : ''}><summary>
+      <span class="trade-symbol" aria-hidden="true">${esc(l.pair.replace('/','').slice(0, 2))}</span>
+      <span class="trade-record-main"><b>${esc(l.pair)}</b><span class="trade-direction ${side === 1 ? 'positive' : side === -1 ? 'negative' : ''}">${direction}</span><span class="trade-reason ${l.reason === 'liquidated' ? 'negative' : ''}">${reason}</span><small class="history-time" title="結算時間（裝置本地時區）">${formatTradeTime(l.t)}</small></span>
+      <span class="trade-result"><strong class="${signCls(l.pnl)}">${signedMoney(l.pnl)}</strong><small>交易損益 <span aria-hidden="true">↗</span></small></span>
+    </summary><div class="trade-record-detail"><span>交易編號 <b>#${l.id}</b></span><span>結算價格 <b>${l.price.toFixed(digits(l.pair))}</b></span><span>損益為交易價差；費用另計</span></div></details>`;
+  }).join("") : '<div class="empty-state"><div class="empty-icon">↗</div>你的交易故事，從第一筆結算開始。</div>');
 }
 
 const pctTxt = m => `${m > 0 ? "+" : ""}${(m * 100).toFixed(0)}%`;
@@ -883,20 +890,21 @@ function bindBattle() {
   $("battleExitBtn").onclick = leaveBattle;
 }
 
-// 省免費額度：在線心跳 60 秒一次（伺服器端在線視窗 150 秒），
-// 登入玩家行情 3 秒同步一次（一次帶回 2 根 K 線）；補算中仍維持 1.5 秒以盡快追平。
-const ONLINE_HEARTBEAT_MS = 60_000, SERVER_POLL_MS = 3000;
+// 減少免費額度消耗；背景分頁不輪詢。這是同步節奏，不是即時行情或成交保證。
+const ONLINE_HEARTBEAT_MS = 120_000, SERVER_POLL_MS = 10_000, SERVER_STALE_MS = 35_000;
+const pollBackoff = Cloud.createReadBackoff(), onlineBackoff = Cloud.createReadBackoff();
 let lastPollAt = 0;
-async function updateOnline(force = false) {
-  if (!Cloud.enabled() || document.hidden || onlinePending || (!force && Date.now() - onlineAt < ONLINE_HEARTBEAT_MS)) return;
+async function updateOnline() {
+  if (!Cloud.enabled() || document.hidden || onlinePending || !onlineBackoff.ready() || Date.now() - onlineAt < ONLINE_HEARTBEAT_MS) return;
   onlinePending = true; onlineAt = Date.now();
   try {
     const data = await Cloud.online(onlineTabId, visitorId);
-    onlineSuccessAt = Date.now();
+    onlineSuccessAt = Date.now(); onlineBackoff.success();
     $("onlineCount").textContent = `在線 ${data.online} 人`;
     $("onlineCount").title = `最近 ${data.windowSeconds} 秒活躍：登入 ${data.players}、訪客 ${data.guests}（訪客依分頁計）`;
     if (data.totalVisitors > 0) $("visitorCount").textContent = `累計來訪 ${data.totalVisitors.toLocaleString("zh-TW")}`;
-  } catch {
+  } catch (error) {
+    onlineBackoff.fail(error); onlineAt = 0;
     if (Date.now() - onlineSuccessAt > ONLINE_HEARTBEAT_MS * 2.5) $("onlineCount").textContent = '在線 —';
   } finally { onlinePending = false; }
 }
@@ -965,7 +973,7 @@ function applyServer(v) {
 async function serverCall(fn) {
   if (busy) { toast("上一個操作還在處理中", true); return null; }
   if (!market.ready() || catchingUp) { toast("伺服器正在載入或結算離線行情，請稍候", true); return null; }
-  if (Date.now() - lastOk > 9000) { toast("報價已超過 9 秒未更新，請等待重新連線", true); poll(); return null; }
+  if (Date.now() - lastOk >= SERVER_STALE_MS) { toast("報價已超過 35 秒未同步，暫停送出新操作；請等待重新連線", true); poll(); return null; }
   const epoch = modeEpoch;
   busy = true; setTradeBusy(true);
   try { const r = await fn(); if (!currentRequest(epoch)) return null; applyServer(r); return r; }
@@ -974,11 +982,11 @@ async function serverCall(fn) {
 }
 
 async function poll() {
-  if (mode !== "server" || busy || document.hidden) return;
+  if (mode !== "server" || busy || document.hidden || !pollBackoff.ready() || Date.now() - lastPollAt < SERVER_POLL_MS - 200) return;
   const epoch = modeEpoch;
   busy = true; lastPollAt = Date.now();
-  try { const result = await Cloud.game.state(market.ready() ? market.step() : -1); if (currentRequest(epoch)) applyServer(result); }
-  catch (e) { if (currentRequest(epoch)) handleServerError(e, true); }
+  try { const result = await Cloud.game.state(market.ready() ? market.step() : -1); if (currentRequest(epoch)) { pollBackoff.success(); applyServer(result); } }
+  catch (e) { if (currentRequest(epoch)) { pollBackoff.fail(e); handleServerError(e, true); } }
   finally { if (epoch === modeEpoch) busy = false; }
 }
 
@@ -1003,13 +1011,13 @@ function renderModeBadge() {
     return;
   }
   const server = mode === "server";
-  const offline = server && Date.now() - lastOk > 9000;
+  const offline = server && Date.now() - lastOk >= SERVER_STALE_MS;
   $("modeBadge").textContent = server ? (!lastOk ? "連線中…" : catchingUp ? `補算中・差${remainingTicks}根` : offline ? "連線中斷" : serverMarketMode === "legacy" ? "舊帳戶個人行情" : "全場共同行情") : "訪客・本機練習";
   $("modeBadge").className = "mode-badge " + (server ? (offline ? "warn" : "server") : "guest");
   $("accountModeChip").textContent = server ? serverMarketMode === "legacy" ? "舊持倉・暫停新開倉" : catchingUp ? "共同行情・帳戶補算中" : "共同行情・登入帳戶" : "訪客模式・不計成績";
   $("guestNote").classList.toggle("hidden", server);
   $("pauseBtn").classList.toggle("hidden", server);
-  $("dataStatus").textContent = server ? catchingUp ? `帳戶已結算至 ${accountSettledAt ? new Date(accountSettledAt).toLocaleString("zh-TW") : "較早時段"}，尚差 ${remainingTicks} 根` : serverMarketMode === "legacy" ? "舊持倉沿用個人行情" : execution ? "共用行情・市價單含價差/滑價・槓桿融資計息" : "所有登入玩家同價・3 秒同步" : (ui.paused ? "已暫停" : "每 1.5 秒更新");
+  $("dataStatus").textContent = server ? catchingUp ? `帳戶已結算至 ${accountSettledAt ? new Date(accountSettledAt).toLocaleString("zh-TW") : "較早時段"}，尚差 ${remainingTicks} 根` : serverMarketMode === "legacy" ? "舊持倉沿用個人行情" : execution ? "共用行情・市價單含價差/滑價・槓桿融資計息" : "所有登入玩家同價・約 10 秒同步，非即時保證" : (ui.paused ? "已暫停" : "每 1.5 秒更新");
 }
 
 function bind() {

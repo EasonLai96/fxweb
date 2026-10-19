@@ -8,7 +8,9 @@ import { SENTIMENT_START, sentimentAt } from "./sentiment.js";
 import { EXECUTION_START, EXECUTION_VERSION, executionPrice, carryCharge } from "./execution.js";
 
 export const TICK_MS = 1500;
-export const MAX_CATCHUP = 600;
+// Bound per-request settlement CPU; pending ticks are persisted and replayed
+// by the next request, never skipped while any position remains open.
+export const MAX_CATCHUP = 120;
 export const PERSIST_EVERY = 40;
 export const EQ_EVERY = 10, EQ_KEEP = 300;
 export const START_CASH = 10000;
@@ -412,7 +414,10 @@ export function view(g, since, events = [], now = Date.now(), marketSecret, sent
     } : null,
     news: isShared ? m.news.filter(n => n.step > newsFrom) : m.news.filter(n => n.step > newsFrom).map(n => publicNews(n, step)),
     account: { cash: a.cash, startingCash: a.startingCash, nextId: a.nextId,
-      positions: a.positions, log: a.log.filter(l => l.type === 'close').slice(-15), eq: a.eq,
+      positions: a.positions, log: a.log.filter(l => l.type === 'close' || l.type === 'partial_close').slice(-15).map(l => {
+        const side = l.side ?? a.log.find(o => o.type === 'open' && o.id === l.id && o.pair === l.pair)?.side;
+        return side === 1 || side === -1 ? { ...l, side } : l;
+      }), eq: a.eq,
       loan: a.loan ? { ...a.loan } : null, loanOwed: E.loanOwed(a), loanLimit: E.loanLimit(a, settledPrices) },
     // Shared candles may already be at head while account events originate at
     // an older cursor. Do not hide newly settled expiry/liquidation by since.

@@ -1,3 +1,4 @@
+import { compactAmount } from './number-format.mjs?v=20261019bignum1';
 // 純 Canvas 繪圖，無外部函式庫。主圖配色沿用原版的深青圖表底色。
 
 export const CHART_THEMES = {
@@ -209,8 +210,8 @@ export function drawEquity(canvas, points, startValue, { up, down, muted, text }
 // 圖上標籤只有 ~50px 寬：超過 6 位數就用 萬 / 億 / 兆 / 京 簡寫。
 function shortNum(v) {
   const a = Math.abs(v), s = v < 0 ? "-" : "";
-  if (!Number.isFinite(a)) return "∞";
-  if (a >= 1e20) return s + a.toExponential(1).replace("e+", "e");
+  if (!Number.isFinite(a)) return "—";
+  if (a >= 1e8) return s + compactAmount(a);
   for (const [n, u] of [[1e16, "京"], [1e12, "兆"], [1e8, "億"], [1e6, "萬"]]) if (a >= n) {
     const q = a / (u === "萬" ? 1e4 : n);
     return s + (q >= 100 ? Math.round(q).toLocaleString("en-US") : q.toFixed(1)) + u;

@@ -1,7 +1,7 @@
 // Active browser tabs (including guest mode) within the last ONLINE_WINDOW_MS.
 // An authenticated account with several tabs counts once; guest tabs count individually.
-// 前端心跳改為每 60 秒一次，視窗必須明顯大於心跳間隔，否則準時送出的分頁會被誤判離線。
-export const ONLINE_WINDOW_MS = 150_000;
+// 前端心跳改為每 120 秒一次，視窗必須明顯大於心跳間隔，否則準時送出的分頁會被誤判離線。
+export const ONLINE_WINDOW_MS = 300_000;
 const TAB_ID = /^[a-f0-9]{32}$/;
 export async function presence(env, tabId, accountId, t = Date.now(), visitorId = null) {
   if (typeof tabId !== 'string' || !TAB_ID.test(tabId)) throw new Error('invalid_tab_id');

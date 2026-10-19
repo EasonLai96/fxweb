@@ -5,12 +5,8 @@ import { equity } from './engine.mjs?v=20261017lab1';
 // For server callers, the raw game.account.eq is also accepted when supplied as account.eq.
 const SITE = 'https://easonlai96.github.io/fxweb/';
 const finite = n => typeof n === 'number' && Number.isFinite(n);
-// ≥ 1 億改用億 / 兆 / 京簡寫，天文數字也不會超出卡片。
-const absAmt = a => {
-  if (a >= 1e20) return a.toExponential(2).replace('e+', 'e');
-  for (const [n, u] of [[1e16, '京'], [1e12, '兆'], [1e8, '億']]) if (a >= n) return `${(a / n).toLocaleString('en-US', { maximumFractionDigits: 2 })} ${u}`;
-  return a.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-};
+import { compactAmount } from './number-format.mjs?v=20261019bignum1';
+const absAmt = compactAmount;
 const fmt = n => finite(n) ? `${n < 0 ? '-' : ''}$${absAmt(Math.abs(n))}` : '—';
 const signed = n => finite(n) ? `${n >= 0 ? '+' : '-'}$${absAmt(Math.abs(n))}` : '—';
 const count = n => Number.isSafeInteger(n) && n >= 0 ? n.toLocaleString('en-US') : '—';

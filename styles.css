@@ -165,7 +165,8 @@ html[data-theme="night"] .primary-button{background:var(--accent);color:#0b2a1e}
 .history-row{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:10px 0;font-size:12px;border-bottom:1px solid var(--border-soft)}
 .history-row:last-child{border:0}
 .history-row span{color:var(--text-muted);font-weight:700}
-.history-row strong{font:700 12px "DM Mono",monospace}
+.history-row strong{font:700 12px "DM Mono",monospace;flex-shrink:0}
+.history-time{display:block;margin-top:5px;color:var(--text-muted);font:400 11px "DM Mono",monospace;font-variant-numeric:tabular-nums;line-height:1.5}
 .liq-tag{color:var(--red-text);background:var(--tint-red);border-radius:5px;padding:2px 5px;font-size:10px;font-weight:900;margin-right:4px}
 
 .order-panel{padding:24px;position:sticky;top:98px}

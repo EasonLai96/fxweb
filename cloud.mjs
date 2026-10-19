@@ -11,7 +11,26 @@ function persist() { try { auth ? localStorage.setItem(AUTH_KEY, JSON.stringify(
 export const user = () => (auth ? auth.username : null);
 
 export class ApiError extends Error {
-  constructor(status, body) { super((body && body.message) || `連線失敗（${status}）`); this.status = status; this.body = body || {}; }
+  constructor(status, body, retryAfterMs = 0) { super((body && body.message) || `連線失敗（${status}）`); this.status = status; this.body = body || {}; this.retryAfterMs = retryAfterMs; }
+}
+
+// Scheduling only: never retries a request (especially a mutation) itself.
+export function createReadBackoff() {
+  let failures = 0, until = 0;
+  return {
+    ready: (t = Date.now()) => t >= until,
+    success() { failures = 0; until = 0; },
+    fail(error, t = Date.now()) {
+      const delay = [15000, 30000, 60000, 120000, 300000][Math.min(failures++, 4)];
+      until = t + Math.max(delay, Number(error?.retryAfterMs) || 0);
+      return until;
+    },
+  };
+}
+function retryAfter(value) {
+  if (!value) return 0;
+  const seconds = Number(value);
+  return Number.isFinite(seconds) ? Math.max(0, seconds * 1000) : Math.max(0, (Date.parse(value) || 0) - Date.now());
 }
 
 let onLogout = () => {};
@@ -29,10 +48,12 @@ async function api(method, path, body) {
   catch { throw new ApiError(0, { message: "連線失敗或逾時。交易結果可能尚未確認，請先重新整理帳戶，不要重複下單。" }); }
   finally { clearTimeout(timeout); }
   const responseType = res.headers.get("content-type") || "";
+  // Platform quota pages never entered our handler. Avoid hammering them every few seconds.
+  const retryAfterMs = Math.max(retryAfter(res.headers.get("retry-after")), res.status === 429 && !responseType.includes("application/json") ? 300000 : 0);
   if (!responseType.includes("application/json")) {
     throw new ApiError(res.status, { outcomeUnknown: true, message: res.status === 503 || res.status === 429
       ? "伺服器暫時超出運算額度，請稍候重試；帳戶資料仍保存在伺服器。"
-      : `伺服器回傳異常格式（HTTP ${res.status}），請稍候再試。` });
+      : `伺服器回傳異常格式（HTTP ${res.status}），請稍候再試。` }, retryAfterMs);
   }
   let data;
   try { data = await res.json(); }
@@ -40,7 +61,7 @@ async function api(method, path, body) {
   if (!data || typeof data !== "object" || Array.isArray(data))
     throw new ApiError(res.status, { error: "invalid_response", outcomeUnknown: true, message: "伺服器回傳異常資料，交易結果尚未確認。" });
   if (res.status === 401 && data.error === "unauthorized" && auth?.token === sentToken && sentToken) { auth = null; persist(); onLogout(); }
-  if (!res.ok) throw new ApiError(res.status, data);
+  if (!res.ok) throw new ApiError(res.status, data, retryAfterMs);
   return data;
 }
 
@@ -212,8 +233,17 @@ export function acknowledgeReceipt(id) {
   if (!unsettled(receipt)) return copy(receipt);
   return copy(updateReceipt(account, id, { status: "acknowledged", acknowledgedAt: Date.now() }));
 }
+let pendingState = null;
+function gameState(since) {
+  const session = auth;
+  if (pendingState?.session === session && pendingState.since === since) return pendingState.promise;
+  const entry = { session, since };
+  entry.promise = api("GET", `/api/game?since=${since}`).finally(() => { if (pendingState === entry) pendingState = null; });
+  pendingState = entry;
+  return entry.promise;
+}
 export const game = {
-  state: since => api("GET", `/api/game?since=${since}`),
+  state: gameState,
   open: (order, since) => mutate("open", { ...order, since }),
   close: (id, since) => mutate("close", { id, since }),
   partialClose: (id, fraction, since) => mutate("close", { id, fraction, since }),

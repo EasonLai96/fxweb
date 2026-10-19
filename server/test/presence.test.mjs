@@ -8,10 +8,10 @@ test('guests count by tab and multiple authenticated tabs count once', async () 
   const DB=db(), env={DB}, time=1_000_000;
   await DB.prepare('INSERT INTO users(id,username,pw_hash,pw_salt,pw_iter,created_at) VALUES(1,?,?,?,?,?)')
     .bind('player','x','salt',1,time).run();
-  assert.deepEqual(await presence(env,id(1),null,time),{online:1,players:0,guests:1,windowSeconds:150,totalVisitors:0});
+  assert.deepEqual(await presence(env,id(1),null,time),{online:1,players:0,guests:1,windowSeconds:300,totalVisitors:0});
   assert.equal((await presence(env,id(2),null,time)).online,2);
-  assert.deepEqual(await presence(env,id(1),1,time),{online:2,players:1,guests:1,windowSeconds:150,totalVisitors:0});
-  assert.deepEqual(await presence(env,id(3),1,time),{online:2,players:1,guests:1,windowSeconds:150,totalVisitors:0});
+  assert.deepEqual(await presence(env,id(1),1,time),{online:2,players:1,guests:1,windowSeconds:300,totalVisitors:0});
+  assert.deepEqual(await presence(env,id(3),1,time),{online:2,players:1,guests:1,windowSeconds:300,totalVisitors:0});
   assert.equal((await presence(env,id(2),null,time+ONLINE_WINDOW_MS+1)).online,1);
   await prunePresence(env,time+ONLINE_WINDOW_MS+1);
   assert.equal((await DB.prepare('SELECT COUNT(*) AS n FROM online_presence').first()).n,1);

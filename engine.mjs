@@ -238,7 +238,7 @@ export function closePosition(state, id, price, time, reason = "manual") {
   state.cash += pnl;
   state.positions.splice(idx, 1);
   const costs = closeCosts(pos);
-  const entry = { t: time, type: "close", id, pair: pos.pair, price, pnl, reason, ...costs,
+  const entry = { t: time, type: "close", id, pair: pos.pair, side: pos.side, price, pnl, reason, ...costs,
     netPnl: costs.costsComplete ? pnl - costs.feePaid - costs.carryPaid : null };
   if (pos.borrowed) entry.borrowed = true;       // 這筆倉位曾借款補倉（成就判定用）
   if (pos.refusedHelp) entry.refused = true;     // 風險提醒時選了「暫不處理」
@@ -278,7 +278,7 @@ export function closePositionPartial(state, id, price, time, fraction, reason = 
   }
   pos.units = units - closed.units; // also materialize units for legacy positions
   state.cash += pnl;
-  const entry = { t: time, type: "partial_close", id, pair: pos.pair, price, pnl, reason, fraction, ...closed, ...costs,
+  const entry = { t: time, type: "partial_close", id, pair: pos.pair, side: pos.side, price, pnl, reason, fraction, ...closed, ...costs,
     netPnl: costs.costsComplete ? pnl - costs.feePaid - costs.carryPaid : null };
   if (pos.borrowed) entry.borrowed = true;
   if (pos.refusedHelp) entry.refused = true;

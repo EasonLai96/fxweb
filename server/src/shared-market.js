@@ -303,7 +303,9 @@ export function sharedPrice(secret,tick,pair) { return context(secret).price(tic
 export function sharedPricer(secret, sentiment) { const c=context(secret,sentiment); return (tick,pair)=>c.price(tick,pair); }
 export function sharedCandle(secret,tick,pair) { return context(secret).candle(tick,pair); }
 export function sharedNews(secret,tick) { return context(secret).news(tick); }
-export function makeSharedMarket(secret,headTick,{history=160,since,sentiment}={}) {
+// Display budget only: settlement/pricing and explicit history callers unchanged.
+export const SHARED_CHART_HISTORY = 160;
+export function makeSharedMarket(secret,headTick,{history=SHARED_CHART_HISTORY,since,sentiment}={}) {
   checkTick(headTick);
   if (!Number.isSafeInteger(history)||history<1||history>10000) throw new RangeError('Invalid shared market history');
   // A valid cursor needs only the new bars. In particular, an unchanged head

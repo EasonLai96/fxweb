@@ -15,7 +15,9 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Nunito:wght@600;700;800;900&display=swap">
-<link rel="stylesheet" href="styles.css?v=20261017ai1">
+<link rel="stylesheet" href="styles.css?v=20261018numbers1">
+<link rel="stylesheet" href="club.css?v=20261018history1">
+<link rel="stylesheet" href="folia-player.css?v=20261018audio1">
 </head>
 <body>
 <div class="app-shell">
@@ -24,7 +26,7 @@
       <span class="brand-mark" aria-hidden="true">
         <svg viewBox="0 0 40 40"><path d="M7 26l7-7 6 5 6-9 7 6" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </span>
-      <div><strong>槓桿交易練習場</strong><small>FX PRACTICE ROOM</small></div>
+      <div><strong>槓桿交易練習場<span class="brand-edition">俱樂部</span></strong><small>THE LEVERAGE CLUB / PAPER TRADING</small></div>
     </div>
     <div class="top-actions">
       <span class="session-pill"><span class="live-dot"></span>模擬帳戶</span>
@@ -39,7 +41,7 @@
   </header>
 
   <main class="main">
-    <div class="practice-heading"><div><span class="section-kicker">THE LEVERAGE CLUB / 01</span><h2>練習判斷。<em>不必賭上真金。</em></h2></div><span class="practice-label"><i aria-hidden="true"></i> SIMULATION ONLY · 虛構行情</span></div>
+    <div class="practice-heading"><div><span class="section-kicker">YOUR DAILY TRADING RITUAL</span><h2>市場有起伏。<em>判斷，慢慢練。</em></h2><p class="practice-copy">觀察行情、建立部位，把每一次交易變成經驗。</p></div><span class="practice-label"><i aria-hidden="true"></i> PAPER TRADING<br><small>模擬交易 · 不涉及真實資金</small></span></div>
     <section id="battleBar" class="battle-bar hidden" aria-label="經典戰役進度">
       <div class="battle-bar-info">
         <span class="section-kicker">CLASSIC BATTLE</span>
@@ -57,9 +59,10 @@
     <section class="balance-strip" aria-label="帳戶概覽">
       <div class="balance-lead">
         <div class="eyebrow">PORTFOLIO / 我的模擬帳戶 <span class="account-mode-chip" id="accountModeChip">訪客模式・不計成績</span></div>
-        <div class="balance-title">帳戶總權益 <span id="equity" class="money-large">$10,000.00</span></div>
+        <div class="balance-title">帳戶總權益 <span class="balance-currency">USD</span><span id="equity" class="money-large">$10,000.00</span></div>
         <p>報酬率 <b id="retPct">+0.00%</b><span id="guestNote">　訪客進度只存在這台裝置。<button type="button" class="inline-link" id="guestLoginLink">登入</button>後由伺服器計算，成績才算數。</span></p>
       </div>
+      <div class="portfolio-spark"><div><span>ACCOUNT TRAJECTORY</span><span class="spark-live">本次瀏覽</span></div><canvas id="portfolioSpark" aria-label="本次瀏覽帳戶權益趨勢"></canvas></div>
       <div class="metric m-free"><span>可用餘額</span><strong id="free">$0.00</strong></div>
       <div class="metric m-float"><span>浮動盈虧</span><strong id="floating">$0.00</strong></div>
       <div class="metric m-used"><span>已用保證金</span><strong id="usedMargin">$0.00</strong></div>
@@ -322,7 +325,8 @@
   </div>
 </div>
 
-<script type="module" src="app.mjs?v=20261017lab1"></script>
+<script type="module" src="app.mjs?v=20261019recovery1"></script>
+<script type="module" src="folia-player.mjs?v=20261018audio1"></script>
 <script>
 // 安裝到手機桌面（PWA）：只快取靜態檔，API 永遠走網路。
 if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
