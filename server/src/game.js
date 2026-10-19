@@ -415,6 +415,7 @@ export function view(g, since, events = [], now = Date.now(), marketSecret, sent
     news: isShared ? m.news.filter(n => n.step > newsFrom) : m.news.filter(n => n.step > newsFrom).map(n => publicNews(n, step)),
     account: { cash: a.cash, startingCash: a.startingCash, nextId: a.nextId,
       positions: a.positions, log: a.log.filter(l => l.type === 'close' || l.type === 'partial_close').slice(-15).map(l => {
+        // Recover direction for legacy closes while their opening record is retained.
         const side = l.side ?? a.log.find(o => o.type === 'open' && o.id === l.id && o.pair === l.pair)?.side;
         return side === 1 || side === -1 ? { ...l, side } : l;
       }), eq: a.eq,
