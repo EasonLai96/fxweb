@@ -1,4 +1,3 @@
-import { compactAmount } from './number-format.mjs?v=20261019bignum1';
 // 純 Canvas 繪圖，無外部函式庫。主圖配色沿用原版的深青圖表底色。
 
 export const CHART_THEMES = {
